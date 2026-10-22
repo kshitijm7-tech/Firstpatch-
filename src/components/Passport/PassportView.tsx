@@ -28,6 +28,8 @@ interface PassportViewProps {
   onUpdatePassport: (updated: DeveloperPassport) => void;
   profileIntel: GitHubProfileIntelligence | null;
   isLoadingProfile: boolean;
+  profileError: string | null;
+  passportStorageStatus: 'saved' | 'unavailable';
   onLoadGitHubProfile: (username: string) => void;
   onGoToDiscovery: () => void;
 }
@@ -42,6 +44,8 @@ export const PassportView: React.FC<PassportViewProps> = ({
   onUpdatePassport,
   profileIntel,
   isLoadingProfile,
+  profileError,
+  passportStorageStatus,
   onLoadGitHubProfile,
   onGoToDiscovery,
 }) => {
@@ -180,6 +184,22 @@ export const PassportView: React.FC<PassportViewProps> = ({
             <p className="text-[11px] text-slate-500 leading-normal">
               Fetches public repository languages and topics to ground your skills profile with observable repository evidence.
             </p>
+            <p className="text-[11px] text-slate-500 leading-normal flex items-start gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+              <span>Only this passport is saved in this browser. GitHub evidence is fetched on demand and is not stored locally.</span>
+            </p>
+            {passportStorageStatus === 'unavailable' && (
+              <p className="text-[11px] text-amber-300" role="status">
+                Browser storage is unavailable, so your passport will reset when this page closes.
+              </p>
+            )}
+            {profileError && (
+              <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-800/60 text-xs text-rose-300" role="alert">
+                <p className="font-semibold">Could not sync GitHub evidence</p>
+                <p className="mt-1">{profileError}</p>
+                <p className="mt-1 text-rose-300/80">Check the username and try again. Only public GitHub data is inspected.</p>
+              </div>
+            )}
           </div>
 
           {/* Languages & Frameworks Selection */}
@@ -431,7 +451,14 @@ export const PassportView: React.FC<PassportViewProps> = ({
               </span>
             </div>
 
-            {profileIntel ? (
+            {isLoadingProfile ? (
+              <div className="space-y-3" role="status" aria-live="polite">
+                <div className="h-16 rounded-xl bg-slate-950 border border-slate-800 animate-pulse" />
+                <div className="h-4 rounded bg-slate-800 animate-pulse w-4/5" />
+                <div className="h-14 rounded-xl bg-slate-950 border border-slate-800 animate-pulse" />
+                <p className="text-xs text-slate-400">Inspecting recent public repository metadata…</p>
+              </div>
+            ) : profileIntel ? (
               <div className="space-y-3">
                 {/* User Card */}
                 <div className="flex items-center gap-3 p-3 rounded-xl bg-slate-950 border border-slate-800/80">
@@ -463,8 +490,12 @@ export const PassportView: React.FC<PassportViewProps> = ({
                 </p>
 
                 {/* Skill Evidence Rows */}
-                <div className="space-y-2 pt-2">
-                  {profileIntel.detected_skills.map((skill, i) => {
+                 <div className="space-y-2 pt-2">
+                   <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 text-[11px] text-slate-400 leading-relaxed">
+                     <span className="font-semibold text-slate-300">Evidence key: </span>
+                     repository evidence is observed in the sampled public repositories; self-reported is from your passport; potential gap is a learning target. Absence of evidence is not proof of absence.
+                   </div>
+                   {profileIntel.detected_skills.map((skill, i) => {
                     const isRepoEvidence = skill.evidence_status === 'repository_evidence_found';
                     const isGap = skill.evidence_status === 'potential_gap';
 

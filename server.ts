@@ -16,6 +16,7 @@ import { getCodebaseContext } from './src/graphify.js';
 import { AppError, sanitizeError } from './src/errors.js';
 import { DeveloperPassportSchema } from './src/schema.js';
 import { fetchGitHubProfileIntelligence, discoverPersonalizedIssues } from './src/passport.js';
+import { ZodError } from 'zod';
 
 dotenv.config();
 
@@ -24,7 +25,7 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-const isProduction = process.env.NODE_ENV === 'production';
+const isProduction = process.env.NODE_ENV === 'production' || process.argv.includes('--production');
 
 // Strict body parser bounded to 100 KB
 app.use(express.json({ limit: '100kb' }));
@@ -39,7 +40,10 @@ const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 const RATE_LIMIT_MAX_REQUESTS = 30;
 
 function rateLimiter(req: express.Request, res: express.Response, next: express.NextFunction): void {
-  const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+  const forwarded = typeof req.headers['x-forwarded-for'] === 'string'
+    ? req.headers['x-forwarded-for'].split(',')[0].trim()
+    : '';
+  const clientIp = (forwarded || req.socket.remoteAddress || 'unknown').slice(0, 100);
   const now = Date.now();
 
   const record = rateLimitMap.get(clientIp);
@@ -64,8 +68,6 @@ function rateLimiter(req: express.Request, res: express.Response, next: express.
   record.count += 1;
   next();
 }
-
-import { fetchGitHubProfileIntelligence, discoverPersonalizedIssues } from './src/passport.js';
 
 // Clean up stale rate limit entries periodically
 setInterval(() => {
@@ -105,19 +107,20 @@ app.get('/api/health', (_req, res) => {
  */
 app.post('/api/profile', rateLimiter, async (req, res) => {
   try {
-    const { username, passport } = req.body || {};
-    if (!username || typeof username !== 'string') {
+    const { username, passport: rawPassport } = req.body || {};
+    if (!username || typeof username !== 'string' || !/^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$/.test(username.replace(/^@/, '').trim())) {
       return res.status(400).json({
         error: 'Missing or invalid GitHub username.',
         code: 'INVALID_USERNAME',
       });
     }
 
+    const passport = DeveloperPassportSchema.parse(rawPassport || {});
     const profileIntelligence = await fetchGitHubProfileIntelligence(username, passport);
-    return res.json(profileIntelligence);
+    return res.json({ intelligence: profileIntelligence });
   } catch (err: unknown) {
     const sanitized = sanitizeError(err);
-    const statusCode = err instanceof AppError ? err.statusCode : 500;
+    const statusCode = err instanceof ZodError ? 400 : err instanceof AppError ? err.statusCode : 500;
     return res.status(statusCode).json(sanitized);
   }
 });
@@ -134,7 +137,7 @@ app.post('/api/discover', rateLimiter, async (req, res) => {
     return res.json({ issues, total_evaluated: issues.length });
   } catch (err: unknown) {
     const sanitized = sanitizeError(err);
-    const statusCode = err instanceof AppError ? err.statusCode : 500;
+    const statusCode = err instanceof ZodError ? 400 : err instanceof AppError ? err.statusCode : 500;
     return res.status(statusCode).json(sanitized);
   }
 });
@@ -144,7 +147,7 @@ app.post('/api/discover', rateLimiter, async (req, res) => {
  */
 app.post('/api/analyze', rateLimiter, async (req, res) => {
   try {
-    const { url, passport } = req.body || {};
+    const { url, passport: rawPassport } = req.body || {};
 
     if (!url || typeof url !== 'string') {
       return res.status(400).json({
@@ -155,6 +158,7 @@ app.post('/api/analyze', rateLimiter, async (req, res) => {
 
     // Step 1: Validate GitHub issue URL
     const parsed = parseIssueUrl(url);
+    const passport = DeveloperPassportSchema.parse(rawPassport || {});
 
     // Step 2: Fetch real issue and repository data from GitHub
     const githubContext = await fetchGitHubContext(
@@ -191,9 +195,18 @@ app.post('/api/analyze', rateLimiter, async (req, res) => {
     });
   } catch (err: unknown) {
     const sanitized = sanitizeError(err);
-    const statusCode = err instanceof AppError ? err.statusCode : 500;
+    const statusCode = err instanceof ZodError ? 400 : err instanceof AppError ? err.statusCode : 500;
     return res.status(statusCode).json(sanitized);
   }
+});
+
+// Keep parser and unexpected middleware failures JSON-shaped and free of
+// framework/provider details.
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (err instanceof SyntaxError) {
+    return res.status(400).json({ error: 'Request body must contain valid JSON.', code: 'INVALID_JSON' });
+  }
+  return res.status(500).json({ error: 'An unexpected error occurred while processing the request.', code: 'INTERNAL_ERROR' });
 });
 
 // Dev server vs Production setup

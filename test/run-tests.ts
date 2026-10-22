@@ -23,6 +23,7 @@ import {
 } from '../src/errors.js';
 import type { GitHubContext } from '../src/github.js';
 import type { RawModelGuide } from '../src/schema.js';
+import { selectCandidateFiles } from '../src/github.js';
 
 let passed = 0;
 let failed = 0;
@@ -106,6 +107,24 @@ test('rejects directory traversal in repo name', () => {
   assert.throws(() => {
     parseIssueUrl('https://github.com/facebook/../repo/issues/1');
   }, InvalidUrlError);
+});
+
+test('rejects encoded URL path traversal and invalid repository path segments', () => {
+  assert.throws(() => {
+    parseIssueUrl('https://github.com/facebook/%2e%2e/repo/issues/1');
+  }, InvalidUrlError);
+  assert.strictEqual(sanitizeFilePath('src/./index.ts').isValid, false);
+  assert.strictEqual(sanitizeFilePath('src/ok-file.ts').isValid, true);
+});
+
+test('retains explicit GitHub source links when the repository tree is truncated', () => {
+  const candidates = selectCandidateFiles(
+    ['README.md'],
+    '`packages/vite/src/node/server/pluginContainer.ts#L215-L218` is involved',
+    'See https://github.com/vitejs/vite/blob/v8.3.5/packages/vite/src/node/server/pluginContainer.ts#L215-L218',
+    'TypeScript'
+  );
+  assert.ok(candidates.includes('packages/vite/src/node/server/pluginContainer.ts'));
 });
 
 // 2. Schema Validation Tests
@@ -755,7 +774,20 @@ test('discoverPersonalizedIssues returns scored and explainable issue recommenda
     available_time: '5 hours/week',
   };
 
-  const discovery = await discoverPersonalizedIssues(mockPassport);
+  const discovery = await discoverPersonalizedIssues(mockPassport, async (endpoint) => {
+    const repo = endpoint.includes('/vite/') ? 'vite' : 'zod';
+    return new Response(JSON.stringify([
+      {
+        number: repo === 'vite' ? 23860 : 100,
+        title: repo === 'vite' ? 'Fix module graph behavior' : 'Improve schema diagnostics',
+        body: 'A TypeScript developer-tool issue with a reproducible case.',
+        html_url: `https://github.com/${repo === 'vite' ? 'vitejs/vite' : 'colinhacks/zod'}/issues/${repo === 'vite' ? 23860 : 100}`,
+        state: 'open',
+        created_at: '2026-01-01T00:00:00Z',
+        labels: [{ name: 'good first issue', color: '7057ff', description: 'New contributor friendly' }],
+      },
+    ]));
+  });
 
   assert(discovery.length > 0, 'Should discover candidate issues');
 

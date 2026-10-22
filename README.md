@@ -96,7 +96,7 @@ Support the following server-side environment variables:
 | Variable | Required | Description |
 |---|---|---|
 | `GEMINI_API_KEY` | **Yes** | API key for Gemini / Gemma models via `@google/genai`. Injected automatically in AI Studio. |
-| `GEMMA_MODEL` | **Yes** | Exact model ID (e.g. `gemini-3.8-flash`). Configured in AI Studio Secrets panel or `.env`. |
+| `GEMMA_MODEL` | **Yes** | Exact accessible Gemma 4 model ID configured in the AI Studio Secrets panel or `.env`; FirstPatch rejects non-Gemma-4 model IDs. |
 | `GITHUB_TOKEN` | Optional | GitHub personal access token with public read access to increase rate limits from 60 to 5,000 req/hr. |
 | `PORT` | Optional | Port for the HTTP server (default: `3000`). |
 

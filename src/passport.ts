@@ -13,6 +13,7 @@ import type {
 
 const GITHUB_API_BASE = 'https://api.github.com';
 const TIMEOUT_MS = 10000;
+type GitHubFetch = (endpoint: string) => Promise<Response>;
 
 /**
  * Fetch wrapper for profile and issue queries.
@@ -214,7 +215,8 @@ const CURATED_REPOSITORIES = [
  * using a transparent, explainable heuristic matching the Developer Passport.
  */
 export async function discoverPersonalizedIssues(
-  passport: DeveloperPassport
+  passport: DeveloperPassport,
+  fetchIssues: GitHubFetch = githubFetch
 ): Promise<DiscoveredIssue[]> {
   const issuesToEvaluate: Array<{
     owner: string;
@@ -239,7 +241,7 @@ export async function discoverPersonalizedIssues(
   await Promise.all(
     selectedRepos.map(async ({ owner, repo, language, domain }) => {
       try {
-        const res = await githubFetch(`/repos/${owner}/${repo}/issues?state=open&per_page=6`);
+        const res = await fetchIssues(`/repos/${owner}/${repo}/issues?state=open&per_page=6`);
         const list = await res.json();
         if (Array.isArray(list)) {
           for (const item of list) {
@@ -342,6 +344,9 @@ export async function discoverPersonalizedIssues(
     }
     if (!labels.length) {
       uncertainties.push('Issue has no maintainer triage labels yet.');
+    }
+    if (uncertainties.length === 0) {
+      uncertainties.push('Repository context and local reproduction still need verification before implementation.');
     }
 
     if (learningOpportunities.length === 0) {

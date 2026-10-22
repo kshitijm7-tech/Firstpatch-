@@ -36,6 +36,7 @@ export const IssueDiscoveryView: React.FC<IssueDiscoveryViewProps> = ({
   const [selectedDifficultyFilter, setSelectedDifficultyFilter] = useState<string>('all');
   const [minScoreFilter, setMinScoreFilter] = useState<number>(0);
   const [evaluatedCount, setEvaluatedCount] = useState<number>(0);
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   const fetchRecommendations = async () => {
     setIsLoading(true);
@@ -55,9 +56,11 @@ export const IssueDiscoveryView: React.FC<IssueDiscoveryViewProps> = ({
 
       setIssues(data.issues || []);
       setEvaluatedCount(data.total_evaluated || (data.issues || []).length);
+      setHasLoaded(true);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Unknown network failure during discovery';
       setError(msg);
+      setHasLoaded(false);
     } finally {
       setIsLoading(false);
     }
@@ -195,7 +198,15 @@ export const IssueDiscoveryView: React.FC<IssueDiscoveryViewProps> = ({
           <div className="space-y-1">
             <p className="font-semibold">Discovery failed</p>
             <p>{error}</p>
+            <p className="text-rose-300/80">No recommendations are shown until this scan succeeds.</p>
           </div>
+          <button
+            onClick={fetchRecommendations}
+            disabled={isLoading}
+            className="ml-auto shrink-0 px-3 py-1.5 rounded-lg bg-rose-900/50 hover:bg-rose-900 text-rose-100 text-xs font-semibold disabled:opacity-50"
+          >
+            Retry scan
+          </button>
         </div>
       )}
 
@@ -396,7 +407,7 @@ export const IssueDiscoveryView: React.FC<IssueDiscoveryViewProps> = ({
       )}
 
       {/* Empty State */}
-      {!isLoading && filteredIssues.length === 0 && (
+      {!isLoading && !error && hasLoaded && filteredIssues.length === 0 && (
         <div className="p-12 text-center rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
           <div className="w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center mx-auto text-slate-400">
             <Compass className="w-6 h-6" />
@@ -424,6 +435,17 @@ export const IssueDiscoveryView: React.FC<IssueDiscoveryViewProps> = ({
               Update Passport
             </button>
           </div>
+        </div>
+      )}
+
+      {!isLoading && !error && !hasLoaded && (
+        <div className="p-10 text-center rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
+          <Compass className="w-7 h-7 text-slate-500 mx-auto" />
+          <p className="text-sm font-semibold text-white">Ready to find a contribution</p>
+          <p className="text-xs text-slate-400">Scan public issues using the preferences in your Developer Passport.</p>
+          <button onClick={fetchRecommendations} className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold">
+            Find matching issues
+          </button>
         </div>
       )}
     </div>

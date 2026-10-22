@@ -117,8 +117,13 @@ export function sanitizeFilePath(rawPath: string): {
 
   const clean = rawPath.trim().replace(/\\/g, '/');
 
+  if (clean.length > 500 || /[\u0000-\u001f\u007f]/.test(clean)) {
+    return { normalizedPath: clean.slice(0, 500), isValid: false, reason: 'Path is too long or contains control characters' };
+  }
+
   // Check for path traversal attempts
-  if (clean.includes('..') || clean.startsWith('/') || clean.startsWith('~')) {
+  const segments = clean.split('/');
+  if (segments.some((segment) => segment === '..') || clean.startsWith('/') || clean.startsWith('~')) {
     return {
       normalizedPath: clean,
       isValid: false,
@@ -130,7 +135,7 @@ export function sanitizeFilePath(rawPath: string): {
   const stripped = clean.replace(/^\.\//, '');
 
   // Basic sanity check on allowed path characters
-  if (!/^[a-zA-Z0-9_.\-/@]+$/.test(stripped)) {
+  if (!stripped || stripped.split('/').some((segment) => !segment || segment === '.' || !/^[a-zA-Z0-9_.@-]+$/.test(segment))) {
     return {
       normalizedPath: stripped,
       isValid: false,
@@ -378,8 +383,14 @@ export function validateGuide(
 
   if (rawEdges.length > 0) {
     for (const r of rawEdges) {
-      const fromNode = r.from_node.trim();
-      const toNode = r.to_node.trim();
+      const fromNode = r.from_node.trim().slice(0, 200);
+      const toNode = r.to_node.trim().slice(0, 200);
+      if (!fromNode || !toNode) continue;
+
+      // File-like nodes must pass the same repository-relative path policy as
+      // candidate files. Invalid model paths are omitted rather than exposed.
+      const nodePaths = [fromNode, toNode].filter((node) => node.includes('/'));
+      if (nodePaths.some((node) => !sanitizeFilePath(node).isValid)) continue;
 
       // Ensure nodes exist or register symbol nodes
       if (!nodesMap.has(fromNode)) {
@@ -402,7 +413,9 @@ export function validateGuide(
         r.edge_type === 'mentioned_in_issue' &&
         (issueText.includes(toNode.toLowerCase()) || issueText.includes(toNode.split('/').pop()?.toLowerCase() || ''));
 
-      const isVerified = isMentionedInIssue || Boolean(r.source_id && sourceMap.has(r.source_id));
+      const linkedSource = r.source_id ? sourceMap.get(r.source_id) : undefined;
+      const hasVerifiedExcerpt = Boolean(linkedSource && r.excerpt && verifyExcerptInSource(r.excerpt, linkedSource.content));
+      const isVerified = isMentionedInIssue || hasVerifiedExcerpt;
 
       edges.push({
         id: `edge_${fromNode}_${toNode}_${edges.length}`,
@@ -413,8 +426,8 @@ export function validateGuide(
         why: r.why,
         is_hypothesis: !isVerified,
         status: isVerified ? 'verified' : 'ai_hypothesis',
-        source_excerpt: r.excerpt,
-        source_url: r.source_id ? sourceMap.get(r.source_id)?.url : null,
+        source_excerpt: hasVerifiedExcerpt ? r.excerpt : undefined,
+        source_url: hasVerifiedExcerpt ? linkedSource?.url : null,
       });
     }
   } else {

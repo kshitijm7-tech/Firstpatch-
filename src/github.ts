@@ -26,6 +26,23 @@ const MAX_README_LENGTH = 6000;
 const MAX_CONTRIBUTING_LENGTH = 4000;
 const MAX_FILE_CONTENT_LENGTH = 4000;
 const MAX_ISSUE_BODY_LENGTH = 4000;
+const MAX_TEXT_FIELD_LENGTH = 500;
+
+function boundedText(value: unknown, fallback = '', max = MAX_TEXT_FIELD_LENGTH): string {
+  return typeof value === 'string' ? value.slice(0, max) : fallback;
+}
+
+function githubWebUrl(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname.toLowerCase() === 'github.com'
+      ? url.toString()
+      : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 const IGNORED_PATH_PREFIXES = [
   'node_modules/',
@@ -185,13 +202,16 @@ export async function fetchGitHubContext(
   const issueRes = await githubFetch(`/repos/${owner}/${repo}/issues/${issueNumber}`);
   handleGitHubErrors(issueRes, `issue #${issueNumber} in ${owner}/${repo}`);
   const rawIssue = await issueRes.json();
+  if (!rawIssue || typeof rawIssue !== 'object' || Array.isArray(rawIssue)) {
+    throw new GitHubApiError('GitHub returned an invalid issue response.');
+  }
 
   // Reject pull requests
   if (rawIssue.pull_request) {
     throw new PullRequestUrlError();
   }
 
-  const rawBody = rawIssue.body || '';
+  const rawBody = boundedText(rawIssue.body, '', MAX_ISSUE_BODY_LENGTH + 1);
   const isBodyTruncated = rawBody.length > MAX_ISSUE_BODY_LENGTH;
   const issueBodyExcerpt = isBodyTruncated
     ? rawBody.slice(0, MAX_ISSUE_BODY_LENGTH)
@@ -202,17 +222,17 @@ export async function fetchGitHubContext(
     owner,
     repo,
     number: issueNumber,
-    title: rawIssue.title || `Issue #${issueNumber}`,
+    title: boundedText(rawIssue.title, `Issue #${issueNumber}`),
     body: issueBodyExcerpt,
-    author: rawIssue.user?.login || 'unknown',
+    author: boundedText(rawIssue.user?.login, 'unknown', 100),
     state: rawIssue.state === 'closed' ? 'closed' : 'open',
-    created_at: rawIssue.created_at || new Date().toISOString(),
-    html_url: rawIssue.html_url || `https://github.com/${owner}/${repo}/issues/${issueNumber}`,
+    created_at: boundedText(rawIssue.created_at, new Date().toISOString(), 50),
+    html_url: githubWebUrl(rawIssue.html_url, `https://github.com/${owner}/${repo}/issues/${issueNumber}`),
     labels: Array.isArray(rawIssue.labels)
       ? rawIssue.labels.map((l: { name: string; color: string; description?: string }) => ({
-          name: l.name,
-          color: l.color,
-          description: l.description,
+          name: boundedText(l?.name, 'unnamed', 100),
+          color: boundedText(l?.color, '', 20),
+          description: boundedText(l?.description, '', 300) || undefined,
         }))
       : [],
   };
@@ -236,17 +256,20 @@ export async function fetchGitHubContext(
 
   handleGitHubErrors(repoRes, `repository ${owner}/${repo}`);
   const rawRepo = await repoRes.json();
+  if (!rawRepo || typeof rawRepo !== 'object' || Array.isArray(rawRepo)) {
+    throw new GitHubApiError('GitHub returned an invalid repository response.');
+  }
 
   const repository: RepositoryMetadata = {
     owner,
     repo,
-    description: rawRepo.description || null,
-    primary_language: rawRepo.language || null,
-    default_branch: rawRepo.default_branch || 'main',
-    license: rawRepo.license?.spdx_id || rawRepo.license?.name || null,
-    topics: Array.isArray(rawRepo.topics) ? rawRepo.topics : [],
-    stars: rawRepo.stargazers_count,
-    html_url: rawRepo.html_url || `https://github.com/${owner}/${repo}`,
+    description: boundedText(rawRepo.description, '', 1000) || null,
+    primary_language: boundedText(rawRepo.language, '', 100) || null,
+    default_branch: boundedText(rawRepo.default_branch, 'main', 200),
+    license: boundedText(rawRepo.license?.spdx_id || rawRepo.license?.name, '', 100) || null,
+    topics: Array.isArray(rawRepo.topics) ? rawRepo.topics.filter((t: unknown): t is string => typeof t === 'string').slice(0, 30).map((t: string) => t.slice(0, 100)) : [],
+    stars: typeof rawRepo.stargazers_count === 'number' ? rawRepo.stargazers_count : undefined,
+    html_url: githubWebUrl(rawRepo.html_url, `https://github.com/${owner}/${repo}`),
   };
 
   sources.push({
@@ -265,7 +288,7 @@ export async function fetchGitHubContext(
     const rawComments = await commentsRes.json();
     if (Array.isArray(rawComments)) {
       for (const c of rawComments.slice(0, 15)) {
-        const bodyText = c.body || '';
+        const bodyText = boundedText(c?.body, '', MAX_COMMENT_LENGTH * 2);
         const isCommentTrunc = bodyText.length > MAX_COMMENT_LENGTH;
         if (isCommentTrunc) truncationFlags.comments = true;
         const commentExcerpt = isCommentTrunc
@@ -273,10 +296,10 @@ export async function fetchGitHubContext(
           : bodyText;
 
         const commentItem = {
-          id: c.id,
-          author: c.user?.login || 'unknown',
+          id: typeof c?.id === 'number' ? c.id : 0,
+          author: boundedText(c?.user?.login, 'unknown', 100),
           body: commentExcerpt,
-          html_url: c.html_url || `${issue.html_url}#issuecomment-${c.id}`,
+          html_url: githubWebUrl(c?.html_url, `${issue.html_url}#issuecomment-${c?.id || 0}`),
         };
         comments.push(commentItem);
 
@@ -311,7 +334,8 @@ export async function fetchGitHubContext(
       treePaths = rawTree
         .slice(0, MAX_TREE_ENTRIES)
         .filter((item: { type?: string }) => item.type === 'blob')
-        .map((item: { path: string }) => item.path);
+        .map((item: { path?: unknown }) => typeof item.path === 'string' ? item.path.slice(0, 500) : '')
+        .filter(Boolean);
 
       if (treeData.truncated || treeEntriesCount >= MAX_TREE_ENTRIES) {
         warnings.push(
@@ -345,7 +369,7 @@ export async function fetchGitHubContext(
         id: 'src_readme',
         type: 'readme',
         label: 'README.md',
-        url: readmeData.html_url || `https://github.com/${owner}/${repo}/blob/${repository.default_branch}/README.md`,
+        url: githubWebUrl(readmeData.html_url, `https://github.com/${owner}/${repo}/blob/${repository.default_branch}/README.md`),
         content: readmeExcerpt,
         length: readmeExcerpt.length,
         truncated: isReadmeTrunc,
@@ -402,7 +426,7 @@ export async function fetchGitHubContext(
             id: `src_file_${slug}`,
             type: 'source_file' as const,
             label: path,
-            url: fileData.html_url || `https://github.com/${owner}/${repo}/blob/${repository.default_branch}/${path}`,
+            url: githubWebUrl(fileData.html_url, `https://github.com/${owner}/${repo}/blob/${repository.default_branch}/${path}`),
             content: excerpt,
             length: excerpt.length,
             truncated: isFileTrunc,
@@ -482,13 +506,19 @@ async function fetchContributing(
 /**
  * Scores files in the tree based on keywords, stack traces, and relevance to the issue.
  */
-function selectCandidateFiles(
+export function selectCandidateFiles(
   paths: string[],
   title: string,
   body: string,
   primaryLanguage: string | null
 ): string[] {
-  if (!paths.length) return [];
+  const combinedText = `${title} ${body}`;
+
+  // Issue authors often link directly to the relevant source file. Preserve
+  // those paths even when GitHub returns a truncated tree and the path is
+  // outside the first bounded tree slice.
+  const explicitCandidates = extractExplicitCandidatePaths(combinedText);
+  if (!paths.length) return explicitCandidates.slice(0, MAX_CANDIDATE_FILES);
 
   // Filter out noisy paths
   const eligiblePaths = paths.filter((p) => {
@@ -503,15 +533,15 @@ function selectCandidateFiles(
     return true;
   });
 
-  const combinedText = `${title} ${body}`.toLowerCase();
+  const normalizedText = combinedText.toLowerCase();
 
   // Extract explicit backticked paths and words from text
-  const backtickMatches = (combinedText.match(/`([^`]+)`/g) || []).map((m) =>
+  const backtickMatches = (normalizedText.match(/`([^`]+)`/g) || []).map((m) =>
     m.replace(/`/g, '').trim()
   );
 
   // Extract stack trace file references (e.g. "at Foo (/src/foo.ts:12:3)")
-  const stackMatches = (combinedText.match(/[a-zA-Z0-9_./\\-]+\.[a-zA-Z]{1,5}/g) || []);
+  const stackMatches = (normalizedText.match(/[a-zA-Z0-9_./\\-]+\.[a-zA-Z]{1,5}/g) || []);
 
   const keywords = new Set<string>();
   const words = combinedText.split(/[\s,.;:()\[\]{}'"]+/);
@@ -575,7 +605,48 @@ function selectCandidateFiles(
   }
 
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, MAX_CANDIDATE_FILES).map((s) => s.path);
+  return Array.from(new Set([
+    ...explicitCandidates,
+    ...scored.map((s) => s.path),
+  ])).slice(0, MAX_CANDIDATE_FILES);
+}
+
+function extractExplicitCandidatePaths(text: string): string[] {
+  const candidates = new Set<string>();
+  const addCandidate = (raw: string) => {
+    let value = raw.trim().replace(/[)`\]}>,.;]+$/, '');
+    if (value.startsWith('http')) {
+      try {
+        const url = new URL(value);
+        if (url.hostname.toLowerCase() !== 'github.com') return;
+        const segments = url.pathname.split('/').filter(Boolean);
+        const blobIndex = segments.indexOf('blob');
+        if (blobIndex < 0 || segments.length <= blobIndex + 2) return;
+        value = segments.slice(blobIndex + 2).join('/');
+      } catch {
+        return;
+      }
+    }
+
+    value = value
+      .replace(/^\.\//, '')
+      .replace(/^\//, '')
+      .replace(/[#:].*$/, '');
+
+    if (
+      value &&
+      value.length <= 500 &&
+      !value.includes('..') &&
+      /^[a-zA-Z0-9_.@/-]+$/.test(value) &&
+      (value.includes('/') || /\.[a-zA-Z0-9]{1,8}$/.test(value))
+    ) {
+      candidates.add(value);
+    }
+  };
+
+  for (const match of text.match(/`[^`]+`/g) || []) addCandidate(match.slice(1, -1));
+  for (const match of text.match(/https?:\/\/github\.com\/[^\s)]+\/blob\/[^\s)#]+/gi) || []) addCandidate(match);
+  return Array.from(candidates);
 }
 
 function getLanguageExt(lang: string): string | null {

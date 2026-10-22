@@ -12,7 +12,7 @@ import { GuideView } from './components/GuideView.js';
 import { HealthModal } from './components/HealthModal.js';
 import { PassportView } from './components/Passport/PassportView.js';
 import { IssueDiscoveryView } from './components/Discovery/IssueDiscoveryView.js';
-import type { FullAnalysisResult, DeveloperPassport, GitHubProfileIntelligence } from './schema.js';
+import { DeveloperPassportSchema, type FullAnalysisResult, type DeveloperPassport, type GitHubProfileIntelligence } from './schema.js';
 
 const STORAGE_KEY_PASSPORT = 'firstpatch_passport_v1';
 
@@ -44,45 +44,48 @@ export default function App() {
   // Developer Passport State & LocalStorage Persistence
   const [passport, setPassport] = useState<DeveloperPassport>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY_PASSPORT);
+      const saved = typeof window !== 'undefined' ? window.localStorage.getItem(STORAGE_KEY_PASSPORT) : null;
       if (saved) {
-        return { ...DEFAULT_PASSPORT, ...JSON.parse(saved) };
+        const parsed = DeveloperPassportSchema.safeParse(JSON.parse(saved));
+        if (parsed.success) return { ...DEFAULT_PASSPORT, ...parsed.data };
       }
-    } catch (e) {
-      // fallback
-    }
+    } catch { /* Use defaults when browser storage is unavailable or corrupt. */ }
     return DEFAULT_PASSPORT;
   });
 
   const [profileIntel, setProfileIntel] = useState<GitHubProfileIntelligence | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [passportStorageStatus, setPassportStorageStatus] = useState<'saved' | 'unavailable'>('saved');
 
   // Sync passport changes to localStorage
   const handleUpdatePassport = (updated: DeveloperPassport) => {
     setPassport(updated);
     try {
-      localStorage.setItem(STORAGE_KEY_PASSPORT, JSON.stringify(updated));
-    } catch (e) {
-      // ignore
-    }
+      window.localStorage.setItem(STORAGE_KEY_PASSPORT, JSON.stringify(updated));
+      setPassportStorageStatus('saved');
+    } catch { setPassportStorageStatus('unavailable'); }
   };
 
   // Fetch GitHub profile intelligence
   const handleLoadGitHubProfile = async (username: string) => {
     if (!username.trim()) return;
     setIsLoadingProfile(true);
+    setProfileError(null);
+    setProfileIntel(null);
     try {
       const res = await fetch('/api/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: username.trim(), passport }),
       });
-      const data = await res.json();
-      if (res.ok && data.intelligence) {
-        setProfileIntel(data.intelligence);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.intelligence) {
+        throw new Error(data.error || 'GitHub profile evidence could not be loaded.');
       }
+      setProfileIntel(data.intelligence);
     } catch (err) {
-      console.error('Failed to load GitHub profile intel:', err);
+      setProfileError(err instanceof Error ? err.message : 'GitHub profile evidence could not be loaded.');
     } finally {
       setIsLoadingProfile(false);
     }
@@ -196,6 +199,8 @@ export default function App() {
             onUpdatePassport={handleUpdatePassport}
             profileIntel={profileIntel}
             isLoadingProfile={isLoadingProfile}
+            profileError={profileError}
+            passportStorageStatus={passportStorageStatus}
             onLoadGitHubProfile={handleLoadGitHubProfile}
             onGoToDiscovery={() => setCurrentView('discovery')}
           />

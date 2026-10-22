@@ -32,6 +32,12 @@ export function parseIssueUrl(rawUrl: string): ParsedIssueUrl {
     throw new InvalidUrlError('URL exceeds acceptable length.');
   }
 
+  // Reject traversal and encoded path separators before URL normalization can
+  // collapse them (new URL('/owner/../repo') becomes '/repo').
+  if (/\\|(?:^|[/])\.\.?(?:[/]|$)|%2e|%2f|%5c/i.test(trimmed)) {
+    throw new InvalidUrlError('URL contains an invalid or encoded path segment.');
+  }
+
   let parsed: URL;
   try {
     parsed = new URL(trimmed);
@@ -75,7 +81,12 @@ export function parseIssueUrl(rawUrl: string): ParsedIssueUrl {
     );
   }
 
-  const [owner, repo, issuesWord, issueNumStr] = segments;
+  let owner: string, repo: string, issuesWord: string, issueNumStr: string;
+  try {
+    [owner, repo, issuesWord, issueNumStr] = segments.map((segment) => decodeURIComponent(segment)) as [string, string, string, string];
+  } catch {
+    throw new InvalidUrlError('URL contains malformed encoding.');
+  }
 
   if (issuesWord.toLowerCase() !== 'issues') {
     throw new InvalidUrlError('URL must point to an "issues" page.');

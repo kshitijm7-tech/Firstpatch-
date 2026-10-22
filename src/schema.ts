@@ -9,15 +9,15 @@ import { z } from 'zod';
  * Developer Passport schema for contributor profile & learning preferences.
  */
 export const DeveloperPassportSchema = z.object({
-  github_username: z.string().default(''),
-  languages: z.array(z.string()).default(['TypeScript', 'JavaScript']),
-  frameworks: z.array(z.string()).default(['React', 'Node.js']),
-  want_to_learn: z.array(z.string()).default(['Rust', 'WebAssembly']),
-  preferred_domains: z.array(z.string()).default(['Developer Tools', 'Web Frameworks']),
+  github_username: z.string().trim().max(39).default(''),
+  languages: z.array(z.string().trim().min(1).max(80)).max(20).default(['TypeScript', 'JavaScript']),
+  frameworks: z.array(z.string().trim().min(1).max(80)).max(20).default(['React', 'Node.js']),
+  want_to_learn: z.array(z.string().trim().min(1).max(80)).max(20).default(['Rust', 'WebAssembly']),
+  preferred_domains: z.array(z.string().trim().min(1).max(80)).max(20).default(['Developer Tools', 'Web Frameworks']),
   experience_level: z.enum(['beginner', 'intermediate', 'advanced']).default('intermediate'),
-  learning_goals: z.string().default('Learn open-source contribution patterns and master AST parsers'),
+  learning_goals: z.string().trim().max(500).default('Learn open-source contribution patterns and master AST parsers'),
   preferred_difficulty: z.enum(['beginner', 'intermediate', 'advanced', 'any']).default('any'),
-  available_time: z.string().default('3-5 hours/week'),
+  available_time: z.string().trim().max(100).default('3-5 hours/week'),
 });
 
 export type DeveloperPassport = z.infer<typeof DeveloperPassportSchema>;
@@ -157,14 +157,14 @@ export const GuideSchema = z.object({
       source_id: z.string().min(1, 'source_id required'),
       supporting_excerpt: z.string().min(1, 'supporting_excerpt required'),
     })
-  ).default([]),
+  ).max(20).default([]),
 
   relevant_files: z.array(
     z.object({
       path: z.string().min(1, 'File path cannot be empty'),
       why: z.string().min(1, 'File relevance reason required'),
     })
-  ).default([]),
+  ).max(20).default([]),
 
   ai_suggestions: z.array(
     z.object({
@@ -172,7 +172,7 @@ export const GuideSchema = z.object({
       detail: z.string().min(1, 'Suggestion detail required'),
       confidence: z.enum(['low', 'medium', 'high']),
     })
-  ).default([]),
+  ).max(20).default([]),
 
   contribution_plan: z.array(
     z.object({
@@ -180,7 +180,7 @@ export const GuideSchema = z.object({
       action: z.string().min(1, 'Action description required'),
       files: z.array(z.string()).default([]),
     })
-  ).default([]),
+  ).max(20).default([]),
 
   tests: z.array(
     z.object({

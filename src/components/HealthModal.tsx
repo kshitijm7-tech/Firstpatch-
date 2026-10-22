@@ -127,7 +127,7 @@ export const HealthModal: React.FC<HealthModalProps> = ({ isOpen, onClose }) => 
                 <ShieldCheck className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
                 <span>
                   No secret tokens or private keys are transmitted to client browsers.
-                  Configuration is verified server-side.
+                   Configuration presence is reported server-side; model accessibility is checked when an analysis is run.
                 </span>
               </div>
             </div>
