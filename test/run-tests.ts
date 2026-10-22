@@ -214,6 +214,11 @@ test('rejects excerpt not found in source', () => {
   assert.strictEqual(verifyExcerptInSource(excerpt, source), false);
 });
 
+test('rejects whitespace-only evidence excerpts', () => {
+  assert.strictEqual(verifyExcerptInSource('   \n\t  ', 'A real source statement.'), false);
+  assert.strictEqual(verifyExcerptInSource('A real source statement.', '   \n\t  '), false);
+});
+
 // 4. File Path Sanitization & Tree Completeness
 console.log('\nGroup 4: File Path Validation & Tree Completeness');
 

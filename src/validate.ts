@@ -55,6 +55,11 @@ export function verifyExcerptInSource(
   const normExcerpt = normalizeText(excerpt);
   const normSource = normalizeText(sourceContent);
 
+  // Whitespace-only excerpts normalize to an empty string, and
+  // String.prototype.includes('') is always true. Reject them explicitly so
+  // empty evidence can never be marked as verified.
+  if (!normExcerpt || !normSource) return false;
+
   if (normSource.includes(normExcerpt)) {
     return true;
   }
