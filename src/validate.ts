@@ -18,6 +18,7 @@ import type {
   ValidatedRelationshipEdge,
   ValidatedRelationshipNode,
   ValidatedTest,
+  DeveloperPassport,
 } from './schema.js';
 
 /**
@@ -148,7 +149,8 @@ export function validateGuide(
   rawGuide: RawModelGuide,
   context: GitHubContext,
   modelId: string,
-  graphifyUsed = false
+  graphifyUsed = false,
+  passport?: DeveloperPassport
 ): { guide: ValidatedGuide; meta: AnalysisMeta } {
   const warnings = [...context.warnings];
   const sourceMap = new Map<string, SourceRegistryItem>();
@@ -472,6 +474,64 @@ export function validateGuide(
     },
   };
 
+  // 5. Validate and construct Personalized Intelligence
+  const rawPI = rawGuide.personalized_intelligence;
+  
+  // Extract user skills and learning targets from passport if available
+  const userMatchingSkills = passport
+    ? [...passport.languages, ...passport.frameworks].filter(
+        (s) =>
+          context.repository.primary_language?.toLowerCase().includes(s.toLowerCase()) ||
+          context.repository.topics.some((t) => t.toLowerCase().includes(s.toLowerCase())) ||
+          context.repository.repo.toLowerCase().includes(s.toLowerCase())
+      )
+    : [];
+
+  const validatedPI = {
+    fit_reason:
+      rawPI?.fit_reason ||
+      (passport
+        ? `Aligns with your ${passport.experience_level} background in ${
+            userMatchingSkills.length > 0 ? userMatchingSkills.join(', ') : passport.languages.join(', ')
+          } and your goal to ${passport.learning_goals}.`
+        : `Aligns with open-source engineering in ${context.repository.primary_language || 'modern'} software projects.`),
+    skills_you_have:
+      rawPI?.skills_you_have && rawPI.skills_you_have.length > 0
+        ? rawPI.skills_you_have
+        : userMatchingSkills.length > 0
+        ? userMatchingSkills
+        : [context.repository.primary_language || 'Core engineering', 'Git workflow'],
+    concepts_to_learn:
+      rawPI?.concepts_to_learn && rawPI.concepts_to_learn.length > 0
+        ? rawPI.concepts_to_learn
+        : passport?.want_to_learn && passport.want_to_learn.length > 0
+        ? passport.want_to_learn
+        : [`Module structure of ${context.repository.repo}`, 'Issue reproduction & test harness'],
+    skill_gap_pathway:
+      rawPI?.skill_gap_pathway && rawPI.skill_gap_pathway.length > 0
+        ? rawPI.skill_gap_pathway.map((item) => ({
+            topic: item.topic,
+            why: item.why,
+            suggested_resource: item.suggested_resource || 'Official project documentation',
+            status: item.status || ('learning_needed' as const),
+          }))
+        : [
+            {
+              topic: `Repository architecture of ${context.repository.repo}`,
+              why: 'Understand where the reported defect fits into the overall repository module boundaries.',
+              suggested_resource: 'README.md and project docs',
+              status: 'ready' as const,
+            },
+            {
+              topic: 'Local reproduction & unit test suite',
+              why: 'Verify the failure locally before modifying code.',
+              suggested_resource: 'Existing test files in repository',
+              status: 'learning_needed' as const,
+            },
+          ],
+    estimated_time_hours: rawPI?.estimated_time_hours || (passport?.available_time ? `Est. ${passport.available_time}` : '3-5 hours'),
+  };
+
   // Construct meta object
   const meta: AnalysisMeta = {
     configured_model: modelId,
@@ -503,6 +563,7 @@ export function validateGuide(
     open_questions: rawGuide.open_questions || [],
     risks: rawGuide.risks || [],
     impact_trail: validatedImpactTrail,
+    personalized_intelligence: validatedPI,
   };
 
   return { guide: validatedGuide, meta };

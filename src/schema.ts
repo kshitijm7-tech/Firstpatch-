@@ -6,6 +6,97 @@
 import { z } from 'zod';
 
 /**
+ * Developer Passport schema for contributor profile & learning preferences.
+ */
+export const DeveloperPassportSchema = z.object({
+  github_username: z.string().default(''),
+  languages: z.array(z.string()).default(['TypeScript', 'JavaScript']),
+  frameworks: z.array(z.string()).default(['React', 'Node.js']),
+  want_to_learn: z.array(z.string()).default(['Rust', 'WebAssembly']),
+  preferred_domains: z.array(z.string()).default(['Developer Tools', 'Web Frameworks']),
+  experience_level: z.enum(['beginner', 'intermediate', 'advanced']).default('intermediate'),
+  learning_goals: z.string().default('Learn open-source contribution patterns and master AST parsers'),
+  preferred_difficulty: z.enum(['beginner', 'intermediate', 'advanced', 'any']).default('any'),
+  available_time: z.string().default('3-5 hours/week'),
+});
+
+export type DeveloperPassport = z.infer<typeof DeveloperPassportSchema>;
+
+/**
+ * Detected skill evidence classification.
+ */
+export type SkillEvidenceStatus =
+  | 'self_reported'
+  | 'repository_evidence_found'
+  | 'potential_gap'
+  | 'not_enough_evidence';
+
+export interface DetectedSkill {
+  name: string;
+  evidence_status: SkillEvidenceStatus;
+  evidence_detail: string;
+  source_repos: string[];
+}
+
+export interface GitHubProfileIntelligence {
+  username: string;
+  name: string | null;
+  bio: string | null;
+  avatar_url: string;
+  html_url: string;
+  public_repos_count: number;
+  detected_skills: DetectedSkill[];
+  top_repositories: Array<{
+    name: string;
+    description: string | null;
+    language: string | null;
+    stars: number;
+    topics: string[];
+    url: string;
+    updated_at: string;
+  }>;
+  recent_activity_summary: string;
+}
+
+export interface DiscoveredIssue {
+  id: string;
+  owner: string;
+  repo: string;
+  number: number;
+  title: string;
+  html_url: string;
+  labels: Array<{ name: string; color: string; description?: string }>;
+  state: 'open' | 'closed';
+  created_at: string;
+  estimated_difficulty: 'beginner' | 'intermediate' | 'advanced';
+  match_score: number; // 0-100 explainable alignment score
+  match_reasons: string[]; // Principal factors behind recommendation
+  relevant_skills: string[];
+  learning_opportunities: string[];
+  uncertainties: string[];
+}
+
+/**
+ * Raw model-generated personalized intelligence schema.
+ */
+export const PersonalizedIntelligenceSchema = z.object({
+  fit_reason: z.string().min(1, 'Fit reason required'),
+  skills_you_have: z.array(z.string()).default([]),
+  concepts_to_learn: z.array(z.string()).default([]),
+  skill_gap_pathway: z.array(
+    z.object({
+      topic: z.string().min(1),
+      why: z.string().min(1),
+      suggested_resource: z.string().default('Official project documentation'),
+      status: z.enum(['ready', 'learning_needed']).default('learning_needed'),
+    })
+  ).default([]),
+  estimated_time_hours: z.string().default('2-4 hours'),
+});
+
+export type RawModelPersonalizedIntelligence = z.infer<typeof PersonalizedIntelligenceSchema>;
+
+/**
  * Raw model-generated impact trail schema.
  */
 export const ImpactTrailSchema = z.object({
@@ -54,8 +145,6 @@ export type RawModelImpactTrail = z.infer<typeof ImpactTrailSchema>;
 
 /**
  * Raw model-generated guide schema.
- * Notice: the model does NOT generate server-trusted properties such as
- * `verified`, `grounded`, `status`, `source_url`, `tree_complete`, or timestamps.
  */
 export const GuideSchema = z.object({
   issue_summary: z.string().min(1, 'Issue summary cannot be empty'),
@@ -103,8 +192,11 @@ export const GuideSchema = z.object({
   open_questions: z.array(z.string()).default([]),
   risks: z.array(z.string()).default([]),
 
-  // New Impact Trail segment
+  // Impact Trail segment
   impact_trail: ImpactTrailSchema.optional(),
+
+  // Personalized Intelligence segment
+  personalized_intelligence: PersonalizedIntelligenceSchema.optional(),
 });
 
 export type RawModelGuide = z.infer<typeof GuideSchema>;
@@ -216,6 +308,21 @@ export interface ValidatedImpactTrail {
   };
 }
 
+export interface ValidatedPersonalizedIntelligence {
+  fit_reason: string;
+  skills_you_have: string[];
+  concepts_to_learn: string[];
+  skill_gap_pathway: Array<{
+    topic: string;
+    why: string;
+    suggested_resource: string;
+    status: 'ready' | 'learning_needed';
+  }>;
+  estimated_time_hours: string;
+}
+
+export type PersonalizedIntelligence = ValidatedPersonalizedIntelligence;
+
 export interface ValidatedGuide {
   issue_summary: string;
   difficulty: 'beginner' | 'intermediate' | 'advanced';
@@ -236,6 +343,7 @@ export interface ValidatedGuide {
   open_questions: string[];
   risks: string[];
   impact_trail: ValidatedImpactTrail;
+  personalized_intelligence: ValidatedPersonalizedIntelligence;
 }
 
 export interface SourceRegistryItem {

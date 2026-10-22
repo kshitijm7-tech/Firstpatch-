@@ -718,8 +718,139 @@ test('validateGuide synthesizes valid Impact Trail even when raw guide omits imp
   assert.strictEqual(guide.impact_trail.relationship_graph.edges.length >= 1, true);
 });
 
+// 7. Developer Passport, Profile Intelligence & Discovery Tests
+console.log('\nGroup 7: Developer Passport & Personalized Contribution Intelligence');
+
+import { DeveloperPassportSchema } from '../src/schema.js';
+import { discoverPersonalizedIssues } from '../src/passport.js';
+
+test('validates DeveloperPassportSchema with defaults and overrides', () => {
+  const valid = DeveloperPassportSchema.parse({
+    github_username: 'octocat',
+    languages: ['TypeScript', 'Python'],
+    frameworks: ['React'],
+    want_to_learn: ['Rust'],
+    preferred_domains: ['CLI Tools'],
+    experience_level: 'intermediate',
+    learning_goals: 'Master Rust and CLI tools',
+    preferred_difficulty: 'beginner',
+    available_time: '10 hours/week',
+  });
+
+  assert.strictEqual(valid.github_username, 'octocat');
+  assert.strictEqual(valid.preferred_difficulty, 'beginner');
+  assert.strictEqual(valid.languages[0], 'TypeScript');
+});
+
+test('discoverPersonalizedIssues returns scored and explainable issue recommendations', async () => {
+  const mockPassport = {
+    github_username: 'testdev',
+    languages: ['TypeScript', 'JavaScript'],
+    frameworks: ['React', 'Express'],
+    want_to_learn: ['AST', 'Compilers'],
+    preferred_domains: ['Developer Tools'],
+    experience_level: 'beginner' as const,
+    learning_goals: 'Learn open-source conventions',
+    preferred_difficulty: 'beginner' as const,
+    available_time: '5 hours/week',
+  };
+
+  const discovery = await discoverPersonalizedIssues(mockPassport);
+
+  assert(discovery.length > 0, 'Should discover candidate issues');
+
+  // Verify first issue structure and explainability
+  const first = discovery[0];
+  assert(typeof first.match_score === 'number' && first.match_score >= 0 && first.match_score <= 100);
+  assert(first.match_reasons.length > 0, 'Must have at least one match reason');
+  assert(first.learning_opportunities.length > 0, 'Must have learning opportunities');
+  assert(first.uncertainties.length > 0, 'Must list uncertainties to verify');
+  assert(first.owner && first.repo && first.number);
+  assert(first.html_url.startsWith('https://github.com/'));
+
+  // Issues should be sorted descending by match_score
+  for (let i = 0; i < discovery.length - 1; i++) {
+    assert(
+      discovery[i].match_score >= discovery[i + 1].match_score,
+      'Issues should be sorted in descending order of match score'
+    );
+  }
+});
+
+test('validateGuide synthesizes personalized intelligence when passport is provided', () => {
+  const minimalContext: GitHubContext = {
+    issue: {
+      owner: 'facebook',
+      repo: 'react',
+      number: 12345,
+      title: 'Fix hydration mismatch with suspense boundary',
+      body: 'Check `packages/react-dom/src/client/ReactDOM.js`',
+      author: 'contributor',
+      state: 'open',
+      created_at: new Date().toISOString(),
+      html_url: 'https://github.com/facebook/react/issues/12345',
+      labels: [{ name: 'component: suspense', color: 'b60205' }],
+    },
+    repository: {
+      owner: 'facebook',
+      repo: 'react',
+      description: 'The library for web and native user interfaces',
+      primary_language: 'JavaScript',
+      default_branch: 'main',
+      license: 'MIT',
+      topics: ['react', 'javascript'],
+      html_url: 'https://github.com/facebook/react',
+    },
+    comments: [],
+    tree: { paths: ['packages/react-dom/src/client/ReactDOM.js'], isComplete: true, totalEntries: 1 },
+    sources: [],
+    truncationFlags: {
+      issue_body: false,
+      comments: false,
+      readme: false,
+      contributing: false,
+      candidate_files: false,
+    },
+    warnings: [],
+  };
+
+  const passport = {
+    github_username: 'reactfan',
+    languages: ['JavaScript', 'TypeScript'],
+    frameworks: ['React'],
+    want_to_learn: ['Hydration', 'Fiber Architecture'],
+    preferred_domains: ['Web Frameworks'],
+    experience_level: 'intermediate' as const,
+    learning_goals: 'Contribute to React core',
+    preferred_difficulty: 'intermediate' as const,
+    available_time: '8 hours/week',
+  };
+
+  const rawGuide: RawModelGuide = {
+    issue_summary: 'Hydration issue in suspense boundary',
+    difficulty: 'intermediate',
+    difficulty_reason: 'Requires understanding React hydration',
+    verified_facts: [],
+    relevant_files: [{ path: 'packages/react-dom/src/client/ReactDOM.js', why: 'Client renderer' }],
+    ai_suggestions: [],
+    contribution_plan: [{ step: 1, action: 'Inspect hydration logic', files: ['packages/react-dom/src/client/ReactDOM.js'] }],
+    tests: [{ description: 'Run hydration tests', command: 'yarn test' }],
+    open_questions: [],
+    risks: [],
+  };
+
+  const { guide } = validateGuide(rawGuide, minimalContext, 'gemma-model', false, passport);
+
+  assert(guide.personalized_intelligence !== undefined, 'Personalized intelligence should be synthesized');
+  assert(guide.personalized_intelligence.fit_reason.length > 0, 'Fit reason should be present');
+  assert(guide.personalized_intelligence.skills_you_have.includes('JavaScript') || guide.personalized_intelligence.skills_you_have.includes('React'));
+  assert(guide.personalized_intelligence.skill_gap_pathway.length > 0, 'Pathway steps should be generated');
+  assert(guide.personalized_intelligence.estimated_time_hours.length > 0, 'Estimated hours must be present');
+});
+
 console.log(`\n=== Test Results: ${passed} passed, ${failed} failed ===\n`);
 
 if (failed > 0) {
   process.exit(1);
 }
+

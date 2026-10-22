@@ -28,14 +28,16 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { ImpactTrailView } from './ImpactTrail/ImpactTrailView.js';
+import { LearningPathwaySection } from './LearningPathway/LearningPathwaySection.js';
 
 interface GuideViewProps {
   result: FullAnalysisResult;
   onAnalyzeNew: () => void;
   activeTab?: string;
+  onEditPassport?: () => void;
 }
 
-export const GuideView: React.FC<GuideViewProps> = ({ result, onAnalyzeNew, activeTab }) => {
+export const GuideView: React.FC<GuideViewProps> = ({ result, onAnalyzeNew, activeTab, onEditPassport }) => {
   const { issue, repository, guide, meta } = result;
 
   const [copiedMarkdown, setCopiedMarkdown] = useState(false);
@@ -64,6 +66,15 @@ ${guide.impact_trail.candidate_files.map(cf => `- \`${cf.path}\` (${cf.evidence_
 3. **Project Conventions:** ${guide.impact_trail.investigation_plan.project_conventions}
 4. **Tests to Inspect (NOT RUN):** ${guide.impact_trail.investigation_plan.tests_to_inspect}
 5. **Likely Impact & Potential Breakages:** ${guide.impact_trail.investigation_plan.potential_breakages}
+` : ''}
+${guide.personalized_intelligence ? `## Personalized Contribution Intelligence & Learning Pathway
+- **Fit Rationale:** ${guide.personalized_intelligence.fit_reason}
+- **Applicable Skills:** ${guide.personalized_intelligence.skills_you_have.join(', ') || 'None'}
+- **Concepts to Learn:** ${guide.personalized_intelligence.concepts_to_learn.join(', ') || 'None'}
+- **Estimated Prep Time:** ${guide.personalized_intelligence.estimated_time_hours}
+
+### Ordered Preparation Steps:
+${guide.personalized_intelligence.skill_gap_pathway.map((s, idx) => `${idx + 1}. **${s.topic}** (${s.status === 'ready' ? 'Ready' : 'Learning Needed'})\n   *Why:* ${s.why}\n   *Resource:* ${s.suggested_resource}`).join('\n')}
 ` : ''}
 ## 1. Verified from GitHub
 ${guide.verified_facts
@@ -298,6 +309,14 @@ ${guide.risks.map((r) => `- ${r}`).join('\n')}
             issueNumber={issue.number}
           />
         </section>
+      )}
+
+      {/* PERSONALIZED CONTRIBUTION INTELLIGENCE & LEARNING PATHWAY */}
+      {guide.personalized_intelligence && (
+        <LearningPathwaySection
+          personalizedIntel={guide.personalized_intelligence}
+          onEditPassport={onEditPassport}
+        />
       )}
 
       {/* SECTION 1: VERIFIED FROM GITHUB */}

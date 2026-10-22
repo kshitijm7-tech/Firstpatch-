@@ -14,6 +14,8 @@ import { generateContributionGuide } from './src/gemma.js';
 import { validateGuide } from './src/validate.js';
 import { getCodebaseContext } from './src/graphify.js';
 import { AppError, sanitizeError } from './src/errors.js';
+import { DeveloperPassportSchema } from './src/schema.js';
+import { fetchGitHubProfileIntelligence, discoverPersonalizedIssues } from './src/passport.js';
 
 dotenv.config();
 
@@ -63,6 +65,8 @@ function rateLimiter(req: express.Request, res: express.Response, next: express.
   next();
 }
 
+import { fetchGitHubProfileIntelligence, discoverPersonalizedIssues } from './src/passport.js';
+
 // Clean up stale rate limit entries periodically
 setInterval(() => {
   const now = Date.now();
@@ -97,11 +101,50 @@ app.get('/api/health', (_req, res) => {
 });
 
 /**
+ * GitHub Profile Intelligence endpoint
+ */
+app.post('/api/profile', rateLimiter, async (req, res) => {
+  try {
+    const { username, passport } = req.body || {};
+    if (!username || typeof username !== 'string') {
+      return res.status(400).json({
+        error: 'Missing or invalid GitHub username.',
+        code: 'INVALID_USERNAME',
+      });
+    }
+
+    const profileIntelligence = await fetchGitHubProfileIntelligence(username, passport);
+    return res.json(profileIntelligence);
+  } catch (err: unknown) {
+    const sanitized = sanitizeError(err);
+    const statusCode = err instanceof AppError ? err.statusCode : 500;
+    return res.status(statusCode).json(sanitized);
+  }
+});
+
+/**
+ * Personalized Issue Discovery endpoint
+ */
+app.post('/api/discover', rateLimiter, async (req, res) => {
+  try {
+    const { passport: rawPassport } = req.body || {};
+    const safePassport = DeveloperPassportSchema.parse(rawPassport || {});
+
+    const issues = await discoverPersonalizedIssues(safePassport);
+    return res.json({ issues, total_evaluated: issues.length });
+  } catch (err: unknown) {
+    const sanitized = sanitizeError(err);
+    const statusCode = err instanceof AppError ? err.statusCode : 500;
+    return res.status(statusCode).json(sanitized);
+  }
+});
+
+/**
  * Main Analysis endpoint
  */
 app.post('/api/analyze', rateLimiter, async (req, res) => {
   try {
-    const { url } = req.body || {};
+    const { url, passport } = req.body || {};
 
     if (!url || typeof url !== 'string') {
       return res.status(400).json({
@@ -124,8 +167,8 @@ app.post('/api/analyze', rateLimiter, async (req, res) => {
     const graphifyContext = await getCodebaseContext(parsed.owner, parsed.repo);
     const graphifyUsed = graphifyContext !== null;
 
-    // Step 3: Construct prompt with defensive security directives
-    const prompt = buildContributionPrompt(githubContext);
+    // Step 3: Construct prompt with defensive security directives & developer passport
+    const prompt = buildContributionPrompt(githubContext, passport);
 
     // Step 4: Invoke configured Gemma model with SDK and schema validation
     const { guide: rawGuide, modelId } = await generateContributionGuide(prompt);
@@ -135,7 +178,8 @@ app.post('/api/analyze', rateLimiter, async (req, res) => {
       rawGuide,
       githubContext,
       modelId,
-      graphifyUsed
+      graphifyUsed,
+      passport
     );
 
     // Return complete, verified analysis result

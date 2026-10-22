@@ -4,27 +4,35 @@
  */
 
 import React from 'react';
-import { Activity, Shield } from 'lucide-react';
+import { Activity, Shield, User, Compass, SearchCode, Sparkles } from 'lucide-react';
+
+export type AppView = 'passport' | 'discovery' | 'analyzer';
 
 interface TopBarProps {
+  currentView: AppView;
+  onSelectView: (view: AppView) => void;
   onReset: () => void;
   onOpenHealth: () => void;
   hasResult: boolean;
   activeTab?: string;
   onSelectTab?: (tab: string) => void;
+  githubUsername?: string;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
+  currentView,
+  onSelectView,
   onReset,
   onOpenHealth,
   hasResult,
   activeTab,
   onSelectTab,
+  githubUsername,
 }) => {
   return (
-    <header className="sticky top-0 z-40 bg-slate-950/90 backdrop-blur-md border-b border-slate-800/80 px-4 sm:px-8 py-3.5 flex items-center justify-between gap-8">
-      {/* Zone 1: Single text element wordmark */}
-      <div className="flex items-center gap-3 shrink-0">
+    <header className="sticky top-0 z-40 bg-slate-950/90 backdrop-blur-md border-b border-slate-800/80 px-4 sm:px-8 py-3 flex items-center justify-between gap-4">
+      {/* Zone 1: Logo & App Switcher */}
+      <div className="flex items-center gap-6 shrink-0">
         <button
           onClick={onReset}
           className="flex items-center gap-2.5 text-left group focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 rounded"
@@ -38,11 +46,55 @@ export const TopBar: React.FC<TopBarProps> = ({
             </span>
           </div>
         </button>
+
+        {/* Primary View Switcher */}
+        <nav className="flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-slate-800 text-xs">
+          <button
+            onClick={() => onSelectView('passport')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition-all ${
+              currentView === 'passport'
+                ? 'bg-indigo-600 text-white shadow-sm font-semibold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <User className="w-3.5 h-3.5" />
+            <span>Passport</span>
+            {githubUsername && (
+              <span className="hidden sm:inline-block font-mono text-[10px] opacity-80">
+                @{githubUsername}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => onSelectView('discovery')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition-all ${
+              currentView === 'discovery'
+                ? 'bg-indigo-600 text-white shadow-sm font-semibold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Compass className="w-3.5 h-3.5" />
+            <span>Discover</span>
+          </button>
+
+          <button
+            onClick={() => onSelectView('analyzer')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition-all ${
+              currentView === 'analyzer'
+                ? 'bg-indigo-600 text-white shadow-sm font-semibold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <SearchCode className="w-3.5 h-3.5" />
+            <span>Investigate Issue</span>
+          </button>
+        </nav>
       </div>
 
-      {/* Zone 2: Clean single-line text navigation links */}
-      {hasResult && onSelectTab ? (
-        <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-400">
+      {/* Zone 2: Sub-tabs when analyzing an issue */}
+      {currentView === 'analyzer' && hasResult && onSelectTab ? (
+        <nav className="hidden xl:flex items-center gap-5 text-xs font-medium text-slate-400">
           <button
             onClick={() => onSelectTab('overview')}
             className={`whitespace-nowrap transition-colors ${
@@ -64,6 +116,16 @@ export const TopBar: React.FC<TopBarProps> = ({
             Impact Trail
           </button>
           <button
+            onClick={() => onSelectTab('pathway')}
+            className={`whitespace-nowrap transition-colors ${
+              activeTab === 'pathway'
+                ? 'text-white font-semibold border-b-2 border-indigo-500 pb-0.5'
+                : 'hover:text-slate-200'
+            }`}
+          >
+            Learning Pathway
+          </button>
+          <button
             onClick={() => onSelectTab('facts')}
             className={`whitespace-nowrap transition-colors ${
               activeTab === 'facts'
@@ -71,7 +133,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 : 'hover:text-slate-200'
             }`}
           >
-            Verified Facts
+            Facts
           </button>
           <button
             onClick={() => onSelectTab('files')}
@@ -81,7 +143,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 : 'hover:text-slate-200'
             }`}
           >
-            Relevant Files
+            Files
           </button>
           <button
             onClick={() => onSelectTab('plan')}
@@ -91,7 +153,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 : 'hover:text-slate-200'
             }`}
           >
-            Contribution Plan
+            Plan
           </button>
           <button
             onClick={() => onSelectTab('tests')}
@@ -101,39 +163,39 @@ export const TopBar: React.FC<TopBarProps> = ({
                 : 'hover:text-slate-200'
             }`}
           >
-            Suggested Tests
+            Tests (NOT RUN)
           </button>
         </nav>
       ) : (
-        <div className="hidden md:flex items-center gap-6 text-xs text-slate-400">
-          <span className="flex items-center gap-1.5">
-            <Shield className="w-3.5 h-3.5 text-indigo-400" />
-            Bounded GitHub Reads
+        <div className="hidden lg:flex items-center gap-4 text-xs text-slate-400">
+          <span className="flex items-center gap-1.5 text-indigo-400/90">
+            <Shield className="w-3.5 h-3.5" />
+            Evidence-Backed
           </span>
           <span aria-hidden="true" className="text-slate-700">·</span>
-          <span>Zero Code Execution</span>
+          <span>Zero Local Code Execution</span>
           <span aria-hidden="true" className="text-slate-700">·</span>
-          <span>Server-Side Grounding</span>
+          <span>Gemma 4 Guided</span>
         </div>
       )}
 
-      {/* Zone 3: 1 primary action */}
-      <div className="flex items-center gap-3 shrink-0">
+      {/* Zone 3: Actions & System Health */}
+      <div className="flex items-center gap-2.5 shrink-0">
         <button
           onClick={onOpenHealth}
-          className="flex items-center gap-2 px-3.5 py-1.5 text-xs font-medium text-slate-300 bg-slate-900 hover:bg-slate-800 border border-slate-700/80 rounded-lg transition-colors whitespace-nowrap shrink-0 focus-visible:ring-2 focus-visible:ring-indigo-500"
+          className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-300 bg-slate-900 hover:bg-slate-800 border border-slate-700/80 rounded-lg transition-colors whitespace-nowrap shrink-0 focus-visible:ring-2 focus-visible:ring-indigo-500"
           title="Inspect Engine Health & Configuration"
         >
           <Activity className="w-3.5 h-3.5 text-emerald-400" />
-          <span>System Status</span>
+          <span className="hidden sm:inline">System Status</span>
         </button>
 
-        {hasResult && (
+        {currentView === 'analyzer' && hasResult && (
           <button
             onClick={onReset}
-            className="px-3.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors whitespace-nowrap shrink-0 shadow-sm shadow-indigo-950 focus-visible:ring-2 focus-visible:ring-indigo-500"
+            className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors whitespace-nowrap shrink-0 shadow-sm shadow-indigo-950 focus-visible:ring-2 focus-visible:ring-indigo-500"
           >
-            Analyze New Issue
+            New Issue
           </button>
         )}
       </div>
