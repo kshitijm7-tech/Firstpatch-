@@ -8,6 +8,7 @@ import type { GitHubContext } from './github.js';
 /**
  * Builds a structured, defensive prompt for the Gemma model.
  * All repository and issue content is encapsulated within untrusted data boundaries.
+ * Instructs model to output both core guide and detailed Impact Trail data.
  */
 export function buildContributionPrompt(context: GitHubContext): string {
   const { issue, repository, sources, tree } = context;
@@ -25,7 +26,7 @@ export function buildContributionPrompt(context: GitHubContext): string {
   const treeSample = tree.paths.slice(0, 120).join('\n');
 
   return `You are FirstPatch, a senior open-source maintainer and engineer.
-Your task is to analyze a real open-source GitHub issue, understand the code behind it, and formulate an evidence-backed contribution plan.
+Your task is to analyze a real open-source GitHub issue, understand the code behind it, and formulate an evidence-backed contribution plan with a complete Impact Trail.
 
 <SECURITY_DIRECTIVE>
 CRITICAL SECURITY INSTRUCTIONS:
@@ -38,34 +39,40 @@ CRITICAL SECURITY INSTRUCTIONS:
 <TASK_REQUIREMENTS>
 Analyze the provided issue and repository context to produce a structured JSON object matching the exact schema specified below.
 
-1. "issue_summary": A concise 2-3 sentence overview explaining what the issue is about and the expected behavior vs actual behavior.
+1. "issue_summary": A concise 2-3 sentence overview explaining what the issue is about and expected vs actual behavior.
 2. "difficulty": Exactly one of "beginner", "intermediate", "advanced".
-3. "difficulty_reason": Clear explanation of why this difficulty level was assigned based on domain complexity, scope of changes, and repository architecture.
-4. "verified_facts": A list of facts directly stated in the issue or repository.
-   Each fact MUST include:
-   - "claim": The specific fact or observation.
-   - "source_id": The exact source ID where this fact was found (must match one of the [id: "..."] values provided in the data).
-   - "supporting_excerpt": A short, verbatim excerpt (1-2 sentences max) from that source that proves the claim.
+3. "difficulty_reason": Clear explanation of why this difficulty level was assigned based on domain complexity and scope of changes.
+4. "verified_facts": List of facts directly stated in the issue or repository with exact "source_id" and verbatim "supporting_excerpt".
 5. "relevant_files": Files likely involved in diagnosing or fixing the issue.
-   Each item must include:
-   - "path": The file path within the repository (use paths from the provided file tree or candidate files whenever possible).
-   - "why": Concise rationale for why this file is relevant.
-6. "ai_suggestions": Actionable technical suggestions and root-cause hypotheses for fixing the issue.
-   Each item must include:
-   - "title": Short title of the suggestion.
-   - "detail": Concrete explanation of what change or investigation to perform.
-   - "confidence": Exactly one of "low", "medium", "high".
-7. "contribution_plan": A step-by-step numbered plan for a contributor to solve the issue.
-   Each item must include:
-   - "step": Integer (1, 2, 3...).
-   - "action": Clear instruction for what the contributor should do in this step.
-   - "files": Array of relevant file path strings for this step.
-8. "tests": Suggested tests to verify the fix or reproduce the bug.
-   Each item must include:
-   - "description": What behavior the test should verify.
-   - "command": Optional shell test command (e.g., "npm test -- -t 'component'", "pytest tests/test_foo.py", or null if non-command). Do NOT claim the test passed; note that tests are for human execution.
-9. "open_questions": 1 to 4 questions or clarifications a contributor should investigate or ask maintainers if necessary.
-10. "risks": 1 to 4 potential regressions or architectural risks to watch out for.
+6. "ai_suggestions": Actionable technical suggestions and root-cause hypotheses with confidence ("low", "medium", "high").
+7. "contribution_plan": Step-by-step numbered plan (step, action, files).
+8. "tests": Suggested tests (description, command or null).
+9. "open_questions": 1 to 4 questions or clarifications.
+10. "risks": 1 to 4 potential regressions or architectural risks.
+11. "impact_trail": An evidence-first investigation map:
+    - "requirements":
+      - "reported_problem": Concrete description of the defect or missing functionality.
+      - "expected_behavior": What should happen according to issue reporter or specs.
+      - "constraints": Specific constraints (e.g., backwards compatibility, performance, types, browser/node versions).
+      - "unanswered_questions": Ambiguities or missing info in the issue.
+    - "candidate_files": Up to 5 most relevant files with:
+      - "path": Relative repo path.
+      - "relevance_explanation": Why this file is suspected or relevant.
+      - "supporting_excerpt": Verbatim excerpt from source file or issue proving relevance.
+      - "source_id": ID of source where excerpt was found.
+    - "relationships": Compact issue-to-code links:
+      - "from_node": "issue" or source file path.
+      - "to_node": Target source file path or symbol name.
+      - "edge_type": One of "mentioned_in_issue", "contains_matching_symbol", "imports_or_calls", "potentially_related".
+      - "label": Short readable edge label (e.g., "Mentioned in issue", "Contains handler").
+      - "why": Rationale for the relationship.
+    - "investigation_plan": Prioritized 6-facet investigation plan:
+      - "inspect_first": What specific line, file, or log to inspect first.
+      - "code_path_to_follow": Which execution path or call chain to trace.
+      - "project_conventions": Repository styling, testing, or architectural rules to observe.
+      - "tests_to_inspect": Which existing test suites or test files to check first.
+      - "potential_breakages": What could break if this code area changes.
+      - "human_investigation_questions": Questions requiring human maintainer review.
 </TASK_REQUIREMENTS>
 
 <OUTPUT_FORMAT>
@@ -108,7 +115,40 @@ You must respond with ONLY valid JSON (no markdown formatting, no code fences, n
     }
   ],
   "open_questions": string[],
-  "risks": string[]
+  "risks": string[],
+  "impact_trail": {
+    "requirements": {
+      "reported_problem": string,
+      "expected_behavior": string,
+      "constraints": string[],
+      "unanswered_questions": string[]
+    },
+    "candidate_files": [
+      {
+        "path": string,
+        "relevance_explanation": string,
+        "supporting_excerpt": string,
+        "source_id": string
+      }
+    ],
+    "relationships": [
+      {
+        "from_node": string,
+        "to_node": string,
+        "edge_type": "mentioned_in_issue" | "contains_matching_symbol" | "imports_or_calls" | "potentially_related",
+        "label": string,
+        "why": string
+      }
+    ],
+    "investigation_plan": {
+      "inspect_first": string,
+      "code_path_to_follow": string,
+      "project_conventions": string,
+      "tests_to_inspect": string,
+      "potential_breakages": string,
+      "human_investigation_questions": string[]
+    }
+  }
 }
 </OUTPUT_FORMAT>
 

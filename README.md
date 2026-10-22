@@ -2,58 +2,89 @@
 
 **Understand a real open-source issue, explore the code behind it, and leave with an evidence-backed contribution plan.**
 
-FirstPatch is a full-stack developer tool built to analyze public GitHub issues, cross-reference repository source trees, and produce structured, evidence-grounded contribution guides using Gemma.
+FirstPatch is an evidence-first open-source contribution investigation tool.
 
 ---
 
-## Key Features
+## The Differentiating Workflow: Impact Trail
 
-1. **End-to-End Issue Analysis**:
-   - Accepts public GitHub issue URLs (`https://github.com/{owner}/{repo}/issues/{number}`).
-   - Fetches real issue metadata, author, labels, and issue discussion comments.
-   - Retrieves repository metadata, README, CONTRIBUTING documentation, and recursive file tree snapshots.
-   - Intelligent candidate file selection: scores candidate source files using stack traces, backticked tokens, and issue keyword relevance.
+```
+Real GitHub issue ──▶ Issue requirements ──▶ Candidate code files ──▶ Traceable code evidence ──▶ Likely impact ──▶ Prioritized investigation plan
+```
 
-2. **Server-Side Evidence Grounding (`src/validate.ts`)**:
-   - **Verified from GitHub**: Cites specific `source_id` entries with verbatim excerpts verified against fetched text snapshots. Flags any fact that cannot be substantiated.
-   - **Snapshot File Tree Integrity**: Checks file paths against the repository tree snapshot. Categorizes files as `exists`, `not_found_in_complete_tree`, or `not_checked` (if tree retrieval was partial).
-   - **Suggested Tests — NOT RUN**: Strict integrity guarantee. FirstPatch never executes test commands or shell scripts. Tests are flagged `status: "not_run"` for contributor execution.
-   - **AI Suggestions Notice**: AI hypotheses and recommendations are separated from verified facts and labeled with confidence levels and human review notices.
+The **Impact Trail** provides:
 
-3. **Security & Prompt-Injection Isolation**:
-   - **Untrusted External Data Boundary**: Issue bodies, comments, README files, and repository source code are explicitly encapsulated within an untrusted data block with security directives warning against prompt injection.
-   - **Zero Secret Leaks**: API keys (`GEMINI_API_KEY`) and tokens (`GITHUB_TOKEN`) reside exclusively on the server and are scrubbed from all error responses.
-   - **Zero Code Execution**: No repositories are cloned, no dependencies are installed from analyzed repositories, and no pull requests are opened.
-   - **Rate Limiting & Timeouts**: In-memory rate limiting and request timeouts protect the server against abuse.
+1. **Issue Requirements Extraction**:
+   - Reported defect or feature requirement.
+   - Expected behavior.
+   - Architectural and backwards-compatibility constraints.
+   - Unanswered questions requiring contributor clarification.
+   - Factual claims grounded against original issue text and comments.
 
-4. **Optional Graphify Integration (`src/graphify.ts`)**:
-   - Includes a non-blocking adapter placeholder ready for Graphify when available. FirstPatch functions completely without Graphify.
+2. **Candidate Code Files (Up to 5)**:
+   - Evaluated using stack traces, backticked tokens, issue keywords, and recursive Git tree snapshots.
+   - Each file displays its path, status (`exists`, `not_found_in_complete_tree`, `not_checked`), evidence status (`verified`, `partial`, `unsupported`), and calculated line numbers (`#L...`).
+   - Direct validated GitHub links with exact line anchors.
+
+3. **Interactive Relationship View**:
+   - Visual issue-to-code relationship map connecting the origin issue, candidate files, and symbols.
+   - Distinguishes **Verified Sources** (solid edges grounded in issue mentions or source references) from **AI Hypotheses** (dashed edges with hypothesis tags).
+   - Selecting any node or edge opens the **Evidence Drawer**.
+
+4. **Evidence Drawer**:
+   - Repository-relative path.
+   - Verbatim supporting excerpt with computed 1-indexed line numbers.
+   - Direct GitHub file and branch link.
+   - Rationale explaining why this evidence matters.
+   - Evidence status: `verified`, `partial`, or `unsupported`.
+
+5. **Prioritized 6-Facet Investigation Plan**:
+   - **Inspect First**: Specific file, line, or configuration to start with.
+   - **Execution Path to Trace**: Recommended code path and call chain.
+   - **Project Conventions**: Coding style, lint rules, and architectural patterns.
+   - **Tests to Inspect (NOT RUN)**: Existing test suites to inspect and run locally. FirstPatch never executes commands.
+   - **Likely Impact & Regressions**: Potential breakages and downstream consumer impact.
+   - **Human Investigation Questions**: Critical architectural decisions requiring maintainer review.
+
+---
+
+## Core Principles & Security Guarantee
+
+- **Zero Command Execution**: FirstPatch never executes shell commands or suggested tests. All tests are marked `NOT RUN`.
+- **Zero Repository Cloning**: All repository information is obtained via read-only GitHub REST API snapshots.
+- **Untrusted External Data Isolation**: Issue descriptions, comments, and repository source code are boxed in `<UNTRUSTED_REPOSITORY_DATA>` blocks preceded by strict `<SECURITY_DIRECTIVE>` warnings.
+- **Server-Side API Key Security**: `GEMINI_API_KEY` and optional `GITHUB_TOKEN` remain strictly on the server and are scrubbed from all error responses.
+- **Bounded Context**: Tree scans are capped at 3,000 files; candidate files are bounded at 6 files (<100 KB each); comments are capped at 15.
 
 ---
 
 ## Architecture & Module Organization
 
 ```
-├── server.ts                  # Express backend entry point + Vite middleware mounting
+├── server.ts                             # Express backend entry point + Vite middleware mounting
 ├── src/
-│   ├── parseIssueUrl.ts       # Strict GitHub issue URL validator (HTTPS, domain, path, PR reject)
-│   ├── github.ts              # GitHub REST API client (tree, README, comments, candidate scoring)
-│   ├── prompt.ts              # Defensive prompt builder with security directives
-│   ├── gemma.ts               # @google/genai SDK model caller with Zod validation & retry
-│   ├── schema.ts              # Zod schemas for raw model guide and validated response
-│   ├── validate.ts            # Server-side evidence grounding and tree verification logic
-│   ├── errors.ts              # Typed error classes and secret-scrubbing error sanitizer
-│   ├── graphify.ts            # Optional Graphify adapter placeholder
-│   ├── App.tsx                # Main React SPA component
+│   ├── parseIssueUrl.ts                  # Strict GitHub issue URL validator (HTTPS, domain, path, PR reject)
+│   ├── github.ts                         # GitHub REST API client (tree, README, comments, candidate scoring)
+│   ├── prompt.ts                         # Defensive prompt builder with security directives & Impact Trail
+│   ├── gemma.ts                          # @google/genai SDK model caller with Zod validation & retry
+│   ├── schema.ts                         # Zod schemas for Guide and Impact Trail
+│   ├── validate.ts                       # Server-side evidence grounding, line numbers, and tree verification
+│   ├── errors.ts                         # Typed error classes and secret-scrubbing error sanitizer
+│   ├── graphify.ts                       # Optional Graphify adapter with bounded timeout & fallback
+│   ├── App.tsx                           # Main React SPA component
 │   └── components/
-│       ├── TopBar.tsx         # Top Bar Contract header
-│       ├── IssueInput.tsx     # Issue URL input with verified public issue examples
-│       ├── ProgressIndicator.tsx # 5-step pipeline progress visualizer
-│       ├── GuideView.tsx      # 4 distinct sections, Markdown export, and evidence registry
-│       ├── ErrorAlert.tsx     # Actionable error cards (404, rate-limits, PRs, timeouts)
-│       └── HealthModal.tsx    # Configuration and service health inspector (/api/health)
+│       ├── TopBar.tsx                    # Top Bar Contract header with Impact Trail navigation
+│       ├── IssueInput.tsx                # Issue URL input with verified public issue examples
+│       ├── ProgressIndicator.tsx            # 5-step pipeline progress visualizer
+│       ├── GuideView.tsx                 # Complete guide display with 4 integrity sections & Markdown export
+│       ├── ErrorAlert.tsx                # Actionable error cards (404, rate-limits, PRs, timeouts)
+│       ├── HealthModal.tsx               # Configuration and service health inspector (/api/health)
+│       └── ImpactTrail/
+│           ├── ImpactTrailView.tsx       # 3-panel responsive Impact Trail container
+│           ├── RelationshipGraph.tsx     # Issue-to-code interactive relationship map
+│           └── EvidenceDrawer.tsx        # Evidence inspection card & 6-facet investigation plan
 └── test/
-    └── run-tests.ts           # Unit tests (URL, schema, grounding, tree, injection fixture)
+    └── run-tests.ts                      # Unit tests (URL, schema, grounding, line numbers, injection fixture)
 ```
 
 ---
@@ -64,19 +95,10 @@ Support the following server-side environment variables:
 
 | Variable | Required | Description |
 |---|---|---|
-| `GEMINI_API_KEY` | **Yes** | API key for Gemini / Gemma models via `@google/genai`. Configured in AI Studio Secrets panel. |
-| `GEMMA_MODEL` | **Yes** | Exact model ID (e.g. `gemini-2.5-flash` or `gemini-3.8-flash`). |
+| `GEMINI_API_KEY` | **Yes** | API key for Gemini / Gemma models via `@google/genai`. Injected automatically in AI Studio. |
+| `GEMMA_MODEL` | **Yes** | Exact model ID (e.g. `gemini-3.8-flash`). Configured in AI Studio Secrets panel or `.env`. |
 | `GITHUB_TOKEN` | Optional | GitHub personal access token with public read access to increase rate limits from 60 to 5,000 req/hr. |
 | `PORT` | Optional | Port for the HTTP server (default: `3000`). |
-
-### How to configure in Google AI Studio
-
-1. Open the **Settings > Secrets** panel in the AI Studio UI.
-2. Ensure your `GEMINI_API_KEY` is present.
-3. Configure `GEMMA_MODEL` (e.g. `gemini-2.5-flash`).
-4. (Optional) Add `GITHUB_TOKEN` for higher GitHub rate limits.
-
-> **Important**: Never paste your API keys into frontend code or commit `.env` files with credentials. Use `.env.example` as a template only.
 
 ---
 
@@ -92,13 +114,13 @@ Starts the full-stack server on `http://localhost:3000` with live Vite integrati
 ```bash
 npm test
 ```
-Executes the comprehensive unit test suite covering:
+Executes the comprehensive unit test suite (24 tests) covering:
 - GitHub issue URL validation, SSRF vectors, and pull-request rejection.
-- Model guide schema validation.
-- Evidence grounding and excerpt verification.
+- Model guide and Impact Trail schema validation.
+- Evidence grounding, line number calculation, and excerpt verification.
 - Repository tree completeness and traversal protection.
 - Prompt-injection isolation fixture.
-- Secret sanitization and error masking.
+- Key/token sanitization in error handling.
 
 ### Production Build
 ```bash
@@ -111,26 +133,14 @@ npm start
 ## Repeatable Demo Flow
 
 1. Open FirstPatch in your browser.
-2. In the URL input field, click any of the verified public examples (e.g., `facebook/react #28000` or `vitejs/vite #14000`), or paste a public GitHub issue URL.
+2. In the URL input field, click any verified example (e.g., `expressjs/express #7538` or `vitejs/vite #23860`), or paste a public GitHub issue URL.
 3. Click **Analyze Issue**.
-4. Observe the 5-step pipeline progress:
-   - Validating URL
-   - Fetching GitHub context
-   - Scanning file tree & candidate files
-   - Gemma reasoning
-   - Server-side evidence validation
-5. Review the generated contribution guide across the 4 distinct sections:
-   - **1. Verified from GitHub**: Read grounded facts with verbatim excerpts and links to GitHub sources.
-   - **2. AI Suggestions**: Review suggested hypotheses with confidence ratings and human review disclaimers.
-   - **3. Relevant Repository Files**: Inspect verified file paths with snapshot existence statuses.
-   - **4. Suggested Tests — NOT RUN**: Check suggested test commands and copy them for local execution.
-6. Click **Copy Markdown** to copy the entire guide into your clipboard for your issue comment or pull request draft.
+4. Review the generated **Impact Trail**:
+   - **Issue Requirements**: Read extracted problem, expected behavior, and constraints.
+   - **Candidate Files**: Click any candidate file to inspect its relevance and verified line numbers.
+   - **Relationship Map**: View the issue-to-code connections; notice the distinction between verified links and AI hypotheses.
+   - **Evidence Drawer**: Review verbatim excerpts, line anchors, and why the evidence matters.
+   - **Prioritized Plan**: Read the 6-facet investigation plan.
+5. Review the remaining four integrity sections (*Verified from GitHub*, *AI Suggestions*, *Relevant Files*, *Suggested Tests — NOT RUN*).
+6. Click **Copy Markdown** to copy the complete guide and Impact Trail into your clipboard.
 7. Click **System Status** in the header to inspect engine health and configuration status (`/api/health`).
-
----
-
-## Known Limitations
-
-- **In-Memory Rate Limiting**: The built-in rate limiter is memory-backed and resets if the server restarts.
-- **Tree Capping**: Very large repositories (>3,000 files) are capped to prevent memory bloat; files outside the snapshot are marked `not_checked` rather than nonexistent.
-- **Read-Only**: FirstPatch does not run tests, clone repos, or push commits. Contributor verification must take place in your local clone.

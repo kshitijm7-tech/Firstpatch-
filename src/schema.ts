@@ -6,6 +6,53 @@
 import { z } from 'zod';
 
 /**
+ * Raw model-generated impact trail schema.
+ */
+export const ImpactTrailSchema = z.object({
+  requirements: z.object({
+    reported_problem: z.string().min(1, 'Reported problem cannot be empty'),
+    expected_behavior: z.string().min(1, 'Expected behavior cannot be empty'),
+    constraints: z.array(z.string()).default([]),
+    unanswered_questions: z.array(z.string()).default([]),
+  }),
+  candidate_files: z.array(
+    z.object({
+      path: z.string().min(1, 'Candidate path required'),
+      relevance_explanation: z.string().min(1, 'Relevance explanation required'),
+      supporting_excerpt: z.string().default(''),
+      source_id: z.string().default(''),
+    })
+  ).max(5).default([]),
+  relationships: z.array(
+    z.object({
+      from_node: z.string().min(1),
+      to_node: z.string().min(1),
+      edge_type: z.enum([
+        'mentioned_in_issue',
+        'contains_matching_symbol',
+        'imports_or_calls',
+        'potentially_related',
+      ]),
+      label: z.string().min(1),
+      why: z.string().min(1),
+      symbol_or_module: z.string().optional(),
+      source_id: z.string().optional(),
+      excerpt: z.string().optional(),
+    })
+  ).default([]),
+  investigation_plan: z.object({
+    inspect_first: z.string().min(1, 'inspect_first required'),
+    code_path_to_follow: z.string().min(1, 'code_path_to_follow required'),
+    project_conventions: z.string().min(1, 'project_conventions required'),
+    tests_to_inspect: z.string().min(1, 'tests_to_inspect required'),
+    potential_breakages: z.string().min(1, 'potential_breakages required'),
+    human_investigation_questions: z.array(z.string()).default([]),
+  }),
+});
+
+export type RawModelImpactTrail = z.infer<typeof ImpactTrailSchema>;
+
+/**
  * Raw model-generated guide schema.
  * Notice: the model does NOT generate server-trusted properties such as
  * `verified`, `grounded`, `status`, `source_url`, `tree_complete`, or timestamps.
@@ -55,6 +102,9 @@ export const GuideSchema = z.object({
 
   open_questions: z.array(z.string()).default([]),
   risks: z.array(z.string()).default([]),
+
+  // New Impact Trail segment
+  impact_trail: ImpactTrailSchema.optional(),
 });
 
 export type RawModelGuide = z.infer<typeof GuideSchema>;
@@ -99,6 +149,73 @@ export interface ValidatedTest {
   status: 'not_run';
 }
 
+export interface ValidatedCandidateFile {
+  path: string;
+  relevance_explanation: string;
+  supporting_excerpt: string;
+  status: FileExistenceStatus;
+  evidence_status: 'verified' | 'partial' | 'unsupported';
+  line_numbers?: { startLine: number; endLine: number } | null;
+  url: string | null;
+  why_it_matters: string;
+  source_id?: string;
+}
+
+export interface ValidatedRelationshipNode {
+  id: string;
+  label: string;
+  type: 'issue' | 'file' | 'symbol' | 'module';
+  subtext?: string;
+  status?: FileExistenceStatus;
+  url?: string | null;
+}
+
+export interface ValidatedRelationshipEdge {
+  id: string;
+  from: string;
+  to: string;
+  type:
+    | 'mentioned_in_issue'
+    | 'contains_matching_symbol'
+    | 'imports_or_calls'
+    | 'potentially_related';
+  label: string;
+  why: string;
+  is_hypothesis: boolean;
+  status: 'verified' | 'ai_hypothesis' | 'unsupported';
+  source_excerpt?: string;
+  source_url?: string | null;
+}
+
+export interface ValidatedImpactTrail {
+  requirements: {
+    reported_problem: string;
+    expected_behavior: string;
+    constraints: string[];
+    unanswered_questions: string[];
+    evidence_claims: Array<{
+      claim: string;
+      source_id: string;
+      excerpt: string;
+      status: GroundingStatus;
+      url: string | null;
+    }>;
+  };
+  candidate_files: ValidatedCandidateFile[];
+  relationship_graph: {
+    nodes: ValidatedRelationshipNode[];
+    edges: ValidatedRelationshipEdge[];
+  };
+  investigation_plan: {
+    inspect_first: string;
+    code_path_to_follow: string;
+    project_conventions: string;
+    tests_to_inspect: string;
+    potential_breakages: string;
+    human_investigation_questions: string[];
+  };
+}
+
 export interface ValidatedGuide {
   issue_summary: string;
   difficulty: 'beginner' | 'intermediate' | 'advanced';
@@ -118,6 +235,7 @@ export interface ValidatedGuide {
   tests: ValidatedTest[];
   open_questions: string[];
   risks: string[];
+  impact_trail: ValidatedImpactTrail;
 }
 
 export interface SourceRegistryItem {

@@ -54,6 +54,16 @@ export const TopBar: React.FC<TopBarProps> = ({
             Overview
           </button>
           <button
+            onClick={() => onSelectTab('trail')}
+            className={`whitespace-nowrap transition-colors ${
+              activeTab === 'trail'
+                ? 'text-white font-semibold border-b-2 border-indigo-500 pb-0.5'
+                : 'hover:text-slate-200'
+            }`}
+          >
+            Impact Trail
+          </button>
+          <button
             onClick={() => onSelectTab('facts')}
             className={`whitespace-nowrap transition-colors ${
               activeTab === 'facts'

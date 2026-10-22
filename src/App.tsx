@@ -71,7 +71,9 @@ export default function App() {
   const handleSelectTab = (tab: string) => {
     setActiveTab(tab);
     const elementId =
-      tab === 'facts'
+      tab === 'trail'
+        ? 'section-impact-trail'
+        : tab === 'facts'
         ? 'section-facts'
         : tab === 'files'
         ? 'section-files'

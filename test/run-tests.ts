@@ -5,12 +5,13 @@
 
 import assert from 'node:assert';
 import { parseIssueUrl } from '../src/parseIssueUrl.js';
-import { GuideSchema } from '../src/schema.js';
+import { GuideSchema, ImpactTrailSchema } from '../src/schema.js';
 import {
   verifyExcerptInSource,
   sanitizeFilePath,
   validateGuide,
   normalizeText,
+  findLineNumbers,
 } from '../src/validate.js';
 import { buildContributionPrompt } from '../src/prompt.js';
 import {
@@ -460,6 +461,261 @@ test('preserves user-safe AppError messages and codes', () => {
 
   assert.strictEqual(sanitized.code, 'GITHUB_RATE_LIMIT');
   assert(sanitized.error.includes('rate limit'));
+});
+
+// 7. Impact Trail & Traceable Investigation Tests
+console.log('\nGroup 7: Impact Trail & Traceable Investigation');
+
+test('findLineNumbers accurately locates 1-indexed start and end lines', () => {
+  const fileContent = `/**
+ * Core utility functions
+ */
+function calculateOffset(a: number, b: number) {
+  const result = a * 2 + b;
+  return result;
+}
+
+export default calculateOffset;`;
+
+  const excerpt = `const result = a * 2 + b;\n  return result;`;
+  const lines = findLineNumbers(fileContent, excerpt);
+
+  assert(lines !== null, 'Should find line numbers');
+  assert.strictEqual(lines.startLine, 5);
+  assert.strictEqual(lines.endLine, 6);
+});
+
+test('ImpactTrailSchema validates full requirements, candidates, relationships, and 6-facet plan', () => {
+  const sampleTrail = {
+    requirements: {
+      reported_problem: 'res.send with Uint16Array corrupts data without ETag',
+      expected_behavior: 'Should handle TypedArray buffers consistently without data loss',
+      constraints: ['Preserve backward compatibility with standard Buffer', 'Do not degrade benchmark perf'],
+      unanswered_questions: ['Does this affect Float64Array?'],
+    },
+    candidate_files: [
+      {
+        path: 'lib/response.js',
+        relevance_explanation: 'Contains res.send implementation',
+        supporting_excerpt: 'res.send = function send(body)',
+        source_id: 'src_file_lib_response_js',
+      },
+    ],
+    relationships: [
+      {
+        from_node: 'issue',
+        to_node: 'lib/response.js',
+        edge_type: 'mentioned_in_issue' as const,
+        label: 'Mentioned in stack trace',
+        why: 'Stack trace points directly to response.js send()',
+      },
+      {
+        from_node: 'lib/response.js',
+        to_node: 'lib/utils.js',
+        edge_type: 'imports_or_calls' as const,
+        label: 'Calls etag helper',
+        why: 'ETag generation for buffers',
+      },
+    ],
+    investigation_plan: {
+      inspect_first: 'Inspect lib/response.js line 150 where Buffer.isBuffer is checked',
+      code_path_to_follow: 'Trace from res.send -> setETag -> send header commit',
+      project_conventions: 'Follow Express 2-space indentation and mocha test conventions',
+      tests_to_inspect: 'test/res.send.js',
+      potential_breakages: 'ETag mismatch in HTTP caching proxies',
+      human_investigation_questions: ['Should non-Uint8Array be normalized via Buffer.from(array.buffer)?'],
+    },
+  };
+
+  const parsed = ImpactTrailSchema.safeParse(sampleTrail);
+  assert.strictEqual(parsed.success, true);
+});
+
+test('validateGuide validates candidate files and classifies verified vs hypothesis edges', () => {
+  const mockContext: GitHubContext = {
+    issue: {
+      owner: 'org',
+      repo: 'repo',
+      number: 42,
+      title: 'Crash in response.send() with TypedArray',
+      body: 'Error occurred in `lib/response.js` when passing Uint16Array',
+      author: 'contributor',
+      state: 'open',
+      created_at: new Date().toISOString(),
+      html_url: 'https://github.com/org/repo/issues/42',
+      labels: [],
+    },
+    repository: {
+      owner: 'org',
+      repo: 'repo',
+      description: 'Web framework',
+      primary_language: 'JavaScript',
+      default_branch: 'master',
+      license: 'MIT',
+      topics: [],
+      html_url: 'https://github.com/org/repo',
+    },
+    comments: [],
+    tree: {
+      paths: ['lib/response.js', 'lib/utils.js', 'package.json'],
+      isComplete: true,
+      totalEntries: 3,
+    },
+    sources: [
+      {
+        id: 'src_file_lib_response_js',
+        type: 'source_file',
+        label: 'lib/response.js',
+        url: 'https://github.com/org/repo/blob/master/lib/response.js',
+        content: `// response.js\nfunction send(body) {\n  if (body instanceof Uint8Array) return;\n}\nmodule.exports = send;\n`,
+        length: 100,
+        truncated: false,
+      },
+    ],
+    truncationFlags: {
+      issue_body: false,
+      comments: false,
+      readme: false,
+      contributing: false,
+      candidate_files: false,
+    },
+    warnings: [],
+  };
+
+  const rawGuide: RawModelGuide = {
+    issue_summary: 'Bug in response send',
+    difficulty: 'intermediate',
+    difficulty_reason: 'Buffer logic',
+    verified_facts: [],
+    relevant_files: [{ path: 'lib/response.js', why: 'Core implementation' }],
+    ai_suggestions: [],
+    contribution_plan: [],
+    tests: [],
+    open_questions: [],
+    risks: [],
+    impact_trail: {
+      requirements: {
+        reported_problem: 'Crash with TypedArray',
+        expected_behavior: 'Safe response',
+        constraints: ['Backward compat'],
+        unanswered_questions: [],
+      },
+      candidate_files: [
+        {
+          path: 'lib/response.js',
+          relevance_explanation: 'Contains send function',
+          supporting_excerpt: 'if (body instanceof Uint8Array)',
+          source_id: 'src_file_lib_response_js',
+        },
+      ],
+      relationships: [
+        {
+          from_node: 'issue',
+          to_node: 'lib/response.js',
+          edge_type: 'mentioned_in_issue',
+          label: 'Mentioned in issue body',
+          why: 'Explicitly named in issue',
+        },
+        {
+          from_node: 'lib/response.js',
+          to_node: 'lib/utils.js',
+          edge_type: 'imports_or_calls',
+          label: 'Inferred helper call',
+          why: 'Suspected call to utils',
+        },
+      ],
+      investigation_plan: {
+        inspect_first: 'Inspect lib/response.js line 2',
+        code_path_to_follow: 'Trace send()',
+        project_conventions: 'Standard JS',
+        tests_to_inspect: 'test/res.send.js',
+        potential_breakages: 'Buffer conversion',
+        human_investigation_questions: [],
+      },
+    },
+  };
+
+  const { guide } = validateGuide(rawGuide, mockContext, 'gemma-model');
+
+  // Verify candidate file has line numbers and verified status
+  const candFile = guide.impact_trail.candidate_files[0];
+  assert.strictEqual(candFile.path, 'lib/response.js');
+  assert.strictEqual(candFile.evidence_status, 'verified');
+  assert(candFile.line_numbers !== null, 'Line numbers should be computed');
+  assert.strictEqual(candFile.line_numbers?.startLine, 3);
+  assert(candFile.url?.includes('#L3-L3'), 'URL should include line anchor');
+
+  // Verify relationship edges: issue -> response.js is verified, response.js -> utils.js is hypothesis
+  const edges = guide.impact_trail.relationship_graph.edges;
+  const verifiedEdge = edges.find((e) => e.from === 'issue' && e.to === 'lib/response.js');
+  assert(verifiedEdge, 'Verified edge should exist');
+  assert.strictEqual(verifiedEdge.is_hypothesis, false);
+  assert.strictEqual(verifiedEdge.status, 'verified');
+
+  const hypothesisEdge = edges.find((e) => e.from === 'lib/response.js' && e.to === 'lib/utils.js');
+  assert(hypothesisEdge, 'Hypothesis edge should exist');
+  assert.strictEqual(hypothesisEdge.is_hypothesis, true);
+  assert.strictEqual(hypothesisEdge.status, 'ai_hypothesis');
+});
+
+test('validateGuide synthesizes valid Impact Trail even when raw guide omits impact_trail', () => {
+  const minimalContext: GitHubContext = {
+    issue: {
+      owner: 'owner',
+      repo: 'repo',
+      number: 1,
+      title: 'Fix something',
+      body: 'Check `src/index.ts`',
+      author: 'dev',
+      state: 'open',
+      created_at: new Date().toISOString(),
+      html_url: 'https://github.com/owner/repo/issues/1',
+      labels: [],
+    },
+    repository: {
+      owner: 'owner',
+      repo: 'repo',
+      description: null,
+      primary_language: 'TypeScript',
+      default_branch: 'main',
+      license: null,
+      topics: [],
+      html_url: 'https://github.com/owner/repo',
+    },
+    comments: [],
+    tree: { paths: ['src/index.ts'], isComplete: true, totalEntries: 1 },
+    sources: [],
+    truncationFlags: {
+      issue_body: false,
+      comments: false,
+      readme: false,
+      contributing: false,
+      candidate_files: false,
+    },
+    warnings: [],
+  };
+
+  const rawGuideWithoutTrail: RawModelGuide = {
+    issue_summary: 'Minimal summary',
+    difficulty: 'beginner',
+    difficulty_reason: 'Easy',
+    verified_facts: [],
+    relevant_files: [{ path: 'src/index.ts', why: 'Main file' }],
+    ai_suggestions: [],
+    contribution_plan: [{ step: 1, action: 'Edit file', files: ['src/index.ts'] }],
+    tests: [{ description: 'Run test', command: 'npm test' }],
+    open_questions: ['Any questions?'],
+    risks: ['Risk of regression'],
+  };
+
+  const { guide } = validateGuide(rawGuideWithoutTrail, minimalContext, 'gemma-model');
+
+  assert(guide.impact_trail !== undefined, 'Impact trail should be synthesized');
+  assert.strictEqual(guide.impact_trail.requirements.reported_problem, 'Minimal summary');
+  assert.strictEqual(guide.impact_trail.candidate_files.length, 1);
+  assert.strictEqual(guide.impact_trail.candidate_files[0].path, 'src/index.ts');
+  assert.strictEqual(guide.impact_trail.relationship_graph.nodes.length >= 2, true);
+  assert.strictEqual(guide.impact_trail.relationship_graph.edges.length >= 1, true);
 });
 
 console.log(`\n=== Test Results: ${passed} passed, ${failed} failed ===\n`);

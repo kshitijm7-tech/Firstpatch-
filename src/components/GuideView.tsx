@@ -27,6 +27,7 @@ import {
   Tag,
   AlertCircle,
 } from 'lucide-react';
+import { ImpactTrailView } from './ImpactTrail/ImpactTrailView.js';
 
 interface GuideViewProps {
   result: FullAnalysisResult;
@@ -48,6 +49,22 @@ export const GuideView: React.FC<GuideViewProps> = ({ result, onAnalyzeNew, acti
 **Issue:** [${issue.title}](${issue.html_url})
 **Difficulty:** ${guide.difficulty.toUpperCase()} — ${guide.difficulty_reason}
 
+${guide.impact_trail ? `## Impact Trail: Traceable Investigation
+### Issue Requirements
+- **Reported Problem:** ${guide.impact_trail.requirements.reported_problem}
+- **Expected Behavior:** ${guide.impact_trail.requirements.expected_behavior}
+- **Constraints:** ${guide.impact_trail.requirements.constraints.join(', ') || 'None stated'}
+
+### Candidate Files & Traceable Evidence
+${guide.impact_trail.candidate_files.map(cf => `- \`${cf.path}\` (${cf.evidence_status.toUpperCase()})${cf.line_numbers ? ` [L${cf.line_numbers.startLine}-L${cf.line_numbers.endLine}]` : ''}\n  *Relevance:* ${cf.relevance_explanation}${cf.url ? `\n  *GitHub Link:* ${cf.url}` : ''}`).join('\n\n')}
+
+### Prioritized Investigation Plan
+1. **Inspect First:** ${guide.impact_trail.investigation_plan.inspect_first}
+2. **Code Path to Follow:** ${guide.impact_trail.investigation_plan.code_path_to_follow}
+3. **Project Conventions:** ${guide.impact_trail.investigation_plan.project_conventions}
+4. **Tests to Inspect (NOT RUN):** ${guide.impact_trail.investigation_plan.tests_to_inspect}
+5. **Likely Impact & Potential Breakages:** ${guide.impact_trail.investigation_plan.potential_breakages}
+` : ''}
 ## 1. Verified from GitHub
 ${guide.verified_facts
   .map(
@@ -271,6 +288,17 @@ ${guide.risks.map((r) => `- ${r}`).join('\n')}
           </div>
         )}
       </div>
+
+      {/* DIFFERENTIATION FEATURE: IMPACT TRAIL */}
+      {guide.impact_trail && (
+        <section id="section-impact-trail">
+          <ImpactTrailView
+            trail={guide.impact_trail}
+            issueTitle={issue.title}
+            issueNumber={issue.number}
+          />
+        </section>
+      )}
 
       {/* SECTION 1: VERIFIED FROM GITHUB */}
       <section id="section-facts" className="space-y-4">

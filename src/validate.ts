@@ -10,9 +10,13 @@ import type {
   GroundingStatus,
   RawModelGuide,
   SourceRegistryItem,
+  ValidatedCandidateFile,
   ValidatedFact,
   ValidatedFile,
   ValidatedGuide,
+  ValidatedImpactTrail,
+  ValidatedRelationshipEdge,
+  ValidatedRelationshipNode,
   ValidatedTest,
 } from './schema.js';
 
@@ -58,6 +62,46 @@ export function verifyExcerptInSource(
 }
 
 /**
+ * Searches for an excerpt in raw file text to calculate reliable 1-indexed line numbers.
+ */
+export function findLineNumbers(
+  fileContent: string,
+  excerpt: string
+): { startLine: number; endLine: number } | null {
+  if (!fileContent || !excerpt) return null;
+
+  const cleanExcerpt = excerpt.trim();
+  if (cleanExcerpt.length < 5) return null;
+
+  // 1. Direct search
+  let charIdx = fileContent.indexOf(cleanExcerpt);
+
+  // 2. Case-insensitive search
+  if (charIdx === -1) {
+    const normContent = fileContent.toLowerCase();
+    const normExcerpt = cleanExcerpt.toLowerCase();
+    charIdx = normContent.indexOf(normExcerpt);
+
+    // 3. Fallback: match first significant line of excerpt
+    if (charIdx === -1) {
+      const firstLine = cleanExcerpt.split('\n')[0].trim().toLowerCase();
+      if (firstLine.length >= 6) {
+        charIdx = normContent.indexOf(firstLine);
+      }
+    }
+  }
+
+  if (charIdx === -1) return null;
+
+  const preText = fileContent.slice(0, charIdx);
+  const startLine = (preText.match(/\n/g) || []).length + 1;
+  const matchExcerptLines = (cleanExcerpt.match(/\n/g) || []).length;
+  const endLine = startLine + matchExcerptLines;
+
+  return { startLine, endLine };
+}
+
+/**
  * Normalizes and checks safety of repository file paths.
  * Rejects traversal (..), absolute paths, and malformed characters.
  */
@@ -97,7 +141,8 @@ export function sanitizeFilePath(rawPath: string): {
 }
 
 /**
- * Validates the raw model guide against real GitHub context and source registry.
+ * Validates the raw model guide against real GitHub context and source registry,
+ * synthesizing the validated Impact Trail.
  */
 export function validateGuide(
   rawGuide: RawModelGuide,
@@ -110,6 +155,10 @@ export function validateGuide(
   for (const s of context.sources) {
     sourceMap.set(s.id, s);
   }
+
+  const treeSet = new Set(context.tree.paths.map((p) => p.toLowerCase()));
+  const branch = context.repository.default_branch || 'main';
+  const issueText = `${context.issue.title}\n\n${context.issue.body}`.toLowerCase();
 
   // 1. Validate Verified Facts
   const validatedFacts: ValidatedFact[] = (rawGuide.verified_facts || []).map((fact) => {
@@ -160,11 +209,8 @@ export function validateGuide(
   }
 
   // 2. Validate Relevant Files
-  const treeSet = new Set(context.tree.paths.map((p) => p.toLowerCase()));
-  const branch = context.repository.default_branch || 'main';
-
   const validatedFiles: ValidatedFile[] = (rawGuide.relevant_files || []).map((item) => {
-    const { normalizedPath, isValid, reason } = sanitizeFilePath(item.path);
+    const { normalizedPath, isValid } = sanitizeFilePath(item.path);
 
     if (!isValid) {
       return {
@@ -206,6 +252,226 @@ export function validateGuide(
     status: 'not_run' as const,
   }));
 
+  // 4. Validate and construct the IMPACT TRAIL
+  const rawImpact = rawGuide.impact_trail;
+
+  // A. Requirements extraction & evidence claims
+  const rawReq = rawImpact?.requirements || {
+    reported_problem: rawGuide.issue_summary || context.issue.title,
+    expected_behavior: 'Resolved issue matching expected behavior described by author.',
+    constraints: [],
+    unanswered_questions: rawGuide.open_questions || [],
+  };
+
+  const evidenceClaims = validatedFacts.map((f) => ({
+    claim: f.claim,
+    source_id: f.source_id,
+    excerpt: f.supporting_excerpt,
+    status: f.grounding_status,
+    url: f.source_url,
+  }));
+
+  // B. Candidate files (up to 5)
+  const candidateRawList = (rawImpact?.candidate_files && rawImpact.candidate_files.length > 0)
+    ? rawImpact.candidate_files.slice(0, 5)
+    : (rawGuide.relevant_files || []).slice(0, 5).map((f) => ({
+        path: f.path,
+        relevance_explanation: f.why,
+        supporting_excerpt: '',
+        source_id: '',
+      }));
+
+  const validatedCandidateFiles: ValidatedCandidateFile[] = candidateRawList.map((cf) => {
+    const { normalizedPath, isValid } = sanitizeFilePath(cf.path);
+    const lowerPath = normalizedPath.toLowerCase();
+    const isPresent = treeSet.has(lowerPath);
+
+    let status: FileExistenceStatus = 'invalid_path';
+    if (isValid) {
+      if (isPresent) status = 'exists';
+      else if (context.tree.isComplete) status = 'not_found_in_complete_tree';
+      else status = 'not_checked';
+    }
+
+    // Try finding candidate file content in fetched source registry
+    const matchingSource = context.sources.find(
+      (s) => s.type === 'source_file' && s.label.toLowerCase() === lowerPath
+    );
+
+    let lineNumbers: { startLine: number; endLine: number } | null = null;
+    let evidenceStatus: 'verified' | 'partial' | 'unsupported' = 'unsupported';
+    let validatedExcerpt = cf.supporting_excerpt || '';
+
+    if (matchingSource && cf.supporting_excerpt) {
+      const inSource = verifyExcerptInSource(cf.supporting_excerpt, matchingSource.content);
+      if (inSource) {
+        evidenceStatus = 'verified';
+        lineNumbers = findLineNumbers(matchingSource.content, cf.supporting_excerpt);
+      } else {
+        evidenceStatus = isPresent ? 'partial' : 'unsupported';
+      }
+    } else if (isPresent) {
+      // Check if file is mentioned in issue description or stack trace
+      if (issueText.includes(lowerPath) || issueText.includes(lowerPath.split('/').pop() || '')) {
+        evidenceStatus = 'verified';
+        if (!validatedExcerpt) {
+          validatedExcerpt = `File mentioned in issue description or stack trace.`;
+        }
+      } else {
+        evidenceStatus = 'partial';
+      }
+    }
+
+    // Direct URL with line anchor if available
+    let fileUrl: string | null = null;
+    if (status === 'exists') {
+      const baseFileUrl = `https://github.com/${context.repository.owner}/${context.repository.repo}/blob/${branch}/${normalizedPath}`;
+      fileUrl = lineNumbers
+        ? `${baseFileUrl}#L${lineNumbers.startLine}-L${lineNumbers.endLine}`
+        : baseFileUrl;
+    }
+
+    return {
+      path: normalizedPath,
+      relevance_explanation: cf.relevance_explanation,
+      supporting_excerpt: validatedExcerpt,
+      status,
+      evidence_status: evidenceStatus,
+      line_numbers: lineNumbers,
+      url: fileUrl,
+      why_it_matters: cf.relevance_explanation,
+      source_id: cf.source_id || matchingSource?.id,
+    };
+  });
+
+  // C. Relationship View: Nodes & Edges
+  const nodesMap = new Map<string, ValidatedRelationshipNode>();
+
+  // Root issue node
+  nodesMap.set('issue', {
+    id: 'issue',
+    label: `Issue #${context.issue.number}`,
+    type: 'issue',
+    subtext: context.issue.title.slice(0, 36) + (context.issue.title.length > 36 ? '...' : ''),
+    url: context.issue.html_url,
+  });
+
+  // File nodes from candidate files
+  for (const cf of validatedCandidateFiles) {
+    const filename = cf.path.split('/').pop() || cf.path;
+    const dir = cf.path.includes('/') ? cf.path.slice(0, cf.path.lastIndexOf('/')) : '';
+    nodesMap.set(cf.path, {
+      id: cf.path,
+      label: filename,
+      type: 'file',
+      subtext: dir,
+      status: cf.status,
+      url: cf.url,
+    });
+  }
+
+  // Edges
+  const edges: ValidatedRelationshipEdge[] = [];
+  const rawEdges = rawImpact?.relationships || [];
+
+  if (rawEdges.length > 0) {
+    for (const r of rawEdges) {
+      const fromNode = r.from_node.trim();
+      const toNode = r.to_node.trim();
+
+      // Ensure nodes exist or register symbol nodes
+      if (!nodesMap.has(fromNode)) {
+        nodesMap.set(fromNode, {
+          id: fromNode,
+          label: fromNode,
+          type: fromNode.includes('/') ? 'file' : 'symbol',
+        });
+      }
+      if (!nodesMap.has(toNode)) {
+        nodesMap.set(toNode, {
+          id: toNode,
+          label: toNode,
+          type: toNode.includes('/') ? 'file' : 'symbol',
+        });
+      }
+
+      // Check if relationship is backed by real text evidence or is hypothesis
+      const isMentionedInIssue =
+        r.edge_type === 'mentioned_in_issue' &&
+        (issueText.includes(toNode.toLowerCase()) || issueText.includes(toNode.split('/').pop()?.toLowerCase() || ''));
+
+      const isVerified = isMentionedInIssue || Boolean(r.source_id && sourceMap.has(r.source_id));
+
+      edges.push({
+        id: `edge_${fromNode}_${toNode}_${edges.length}`,
+        from: fromNode,
+        to: toNode,
+        type: r.edge_type,
+        label: r.label,
+        why: r.why,
+        is_hypothesis: !isVerified,
+        status: isVerified ? 'verified' : 'ai_hypothesis',
+        source_excerpt: r.excerpt,
+        source_url: r.source_id ? sourceMap.get(r.source_id)?.url : null,
+      });
+    }
+  } else {
+    // Synthesize verified or hypothesis issue-to-file relationships
+    validatedCandidateFiles.forEach((cf, idx) => {
+      const lower = cf.path.toLowerCase();
+      const filename = lower.split('/').pop() || '';
+      const isMentioned = issueText.includes(lower) || issueText.includes(filename);
+
+      edges.push({
+        id: `edge_issue_${cf.path}_${idx}`,
+        from: 'issue',
+        to: cf.path,
+        type: isMentioned ? 'mentioned_in_issue' : 'potentially_related',
+        label: isMentioned ? 'Mentioned in issue / trace' : 'Candidate investigation area',
+        why: cf.relevance_explanation,
+        is_hypothesis: !isMentioned,
+        status: isMentioned ? 'verified' : 'ai_hypothesis',
+        source_excerpt: cf.supporting_excerpt,
+        source_url: cf.url,
+      });
+    });
+  }
+
+  // D. Prioritized Investigation Plan
+  const rawPlan = rawImpact?.investigation_plan || {
+    inspect_first: rawGuide.contribution_plan?.[0]?.action || 'Inspect the issue description and verify reproducing steps.',
+    code_path_to_follow: validatedCandidateFiles[0]?.path
+      ? `Trace entry point and logic in ${validatedCandidateFiles[0].path}`
+      : 'Trace through the core module identified in the issue description.',
+    project_conventions: 'Review CONTRIBUTING.md, lint rules, and existing test naming patterns.',
+    tests_to_inspect: rawGuide.tests?.[0]?.description || 'Run the repository test suite against the target module.',
+    potential_breakages: rawGuide.risks?.[0] || 'Unintended side effects in dependent consumers of this module.',
+    human_investigation_questions: rawGuide.open_questions || [],
+  };
+
+  const validatedImpactTrail: ValidatedImpactTrail = {
+    requirements: {
+      reported_problem: rawReq.reported_problem,
+      expected_behavior: rawReq.expected_behavior,
+      constraints: rawReq.constraints || [],
+      unanswered_questions: rawReq.unanswered_questions || [],
+      evidence_claims: evidenceClaims,
+    },
+    candidate_files: validatedCandidateFiles,
+    relationship_graph: {
+      nodes: Array.from(nodesMap.values()),
+      edges,
+    },
+    investigation_plan: {
+      inspect_first: rawPlan.inspect_first,
+      code_path_to_follow: rawPlan.code_path_to_follow,
+      project_conventions: rawPlan.project_conventions,
+      tests_to_inspect: rawPlan.tests_to_inspect,
+      potential_breakages: rawPlan.potential_breakages,
+      human_investigation_questions: rawPlan.human_investigation_questions || [],
+    },
+  };
+
   // Construct meta object
   const meta: AnalysisMeta = {
     configured_model: modelId,
@@ -236,6 +502,7 @@ export function validateGuide(
     tests: validatedTests,
     open_questions: rawGuide.open_questions || [],
     risks: rawGuide.risks || [],
+    impact_trail: validatedImpactTrail,
   };
 
   return { guide: validatedGuide, meta };
