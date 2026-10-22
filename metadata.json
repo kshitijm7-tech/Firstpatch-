@@ -1,0 +1,6 @@
+{
+  "name": "FirstPatch",
+  "description": "Understand real open-source GitHub issues, explore repository code, and generate evidence-backed contribution plans using Gemma.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
