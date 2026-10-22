@@ -97,7 +97,13 @@ Support the following server-side environment variables:
 |---|---|---|
 | `GEMINI_API_KEY` | **Yes** | API key for Gemini / Gemma models via `@google/genai`. Injected automatically in AI Studio. |
 | `GEMMA_MODEL` | **Yes** | Exact accessible Gemma 4 model ID configured in the AI Studio Secrets panel or `.env`; FirstPatch rejects non-Gemma-4 model IDs. |
+| `OLLAMA_ENABLED` | Optional | Set to `true` to enable local Phi/Llama fallback through Ollama when Gemma 4 is unavailable. |
+| `OLLAMA_BASE_URL` | Optional | Ollama server URL (default: `http://localhost:11434`). |
+| `OLLAMA_PHI_MODEL` | Optional | Installed Ollama Phi model name, used first as fallback. |
+| `OLLAMA_LLAMA_MODEL` | Optional | Installed Ollama Llama model name, used second as fallback. |
 | `GITHUB_TOKEN` | Optional | GitHub personal access token with public read access to increase rate limits from 60 to 5,000 req/hr. |
+| `GRAPHIFY_ENABLED` | Optional | Set to `true` to try the bounded external Graphify adapter; the local evidence-backed fallback remains available. |
+| `GRAPHIFY_ENDPOINT` | Optional | Server-side HTTPS endpoint exposing the Graphify `/context` contract. Never expose credentials in the browser. |
 | `PORT` | Optional | Port for the HTTP server (default: `3000`). |
 
 ---

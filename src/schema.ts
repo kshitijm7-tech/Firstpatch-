@@ -256,7 +256,7 @@ export interface ValidatedCandidateFile {
 export interface ValidatedRelationshipNode {
   id: string;
   label: string;
-  type: 'issue' | 'file' | 'symbol' | 'module';
+  type: 'issue' | 'repository' | 'file' | 'symbol' | 'module' | 'test';
   subtext?: string;
   status?: FileExistenceStatus;
   url?: string | null;
@@ -356,8 +356,51 @@ export interface SourceRegistryItem {
   truncated: boolean;
 }
 
+/** Bounded, evidence-backed codebase graph primitives. */
+export type GraphNodeType = 'issue' | 'repository' | 'file' | 'module' | 'symbol' | 'test';
+export type GraphEdgeType =
+  | 'mentions'
+  | 'contains'
+  | 'imports'
+  | 'requires'
+  | 'references'
+  | 'tests';
+export type GraphAvailability = 'available' | 'partial' | 'unavailable';
+
+export interface GraphEvidence {
+  sourceId: string;
+  excerpt: string;
+  lineStart?: number;
+  lineEnd?: number;
+}
+
+export interface GraphNode {
+  id: string;
+  type: GraphNodeType;
+  label: string;
+  path?: string;
+  evidence?: GraphEvidence[];
+}
+
+export interface GraphEdge {
+  id: string;
+  from: string;
+  to: string;
+  type: GraphEdgeType;
+  evidence: GraphEvidence[];
+}
+
+export interface BoundedGraph {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  status: GraphAvailability;
+  warnings: string[];
+}
+
 export interface AnalysisMeta {
   configured_model: string;
+  model_provider?: 'google' | 'ollama';
+  fallback_used?: boolean;
   timestamp: string;
   sources_fetched: Array<{
     id: string;
@@ -377,6 +420,7 @@ export interface AnalysisMeta {
     candidate_files: boolean;
   };
   graphify_used: boolean;
+  graphify_status: 'native' | 'local_fallback' | 'unavailable';
   warnings: string[];
 }
 

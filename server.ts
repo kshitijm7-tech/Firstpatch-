@@ -12,9 +12,10 @@ import { fetchGitHubContext } from './src/github.js';
 import { buildContributionPrompt } from './src/prompt.js';
 import { generateContributionGuide } from './src/gemma.js';
 import { validateGuide } from './src/validate.js';
-import { getCodebaseContext } from './src/graphify.js';
+import { getCodebaseContext, getLocalCodebaseContext } from './src/graphify.js';
 import { AppError, sanitizeError } from './src/errors.js';
 import { DeveloperPassportSchema } from './src/schema.js';
+import { validateGraph } from './src/validate.js';
 import { fetchGitHubProfileIntelligence, discoverPersonalizedIssues } from './src/passport.js';
 import { ZodError } from 'zod';
 
@@ -97,6 +98,10 @@ app.get('/api/health', (_req, res) => {
       gemmaModelConfigured: Boolean(modelId),
       modelId: modelId,
       githubTokenConfigured: hasGithubToken,
+      ollamaEnabled: process.env.OLLAMA_ENABLED === 'true',
+      ollamaBaseUrlConfigured: Boolean(process.env.OLLAMA_BASE_URL?.trim()),
+      ollamaPhiModelConfigured: Boolean(process.env.OLLAMA_PHI_MODEL?.trim()),
+      ollamaLlamaModelConfigured: Boolean(process.env.OLLAMA_LLAMA_MODEL?.trim()),
     },
     service: 'FirstPatch Analysis Engine',
   });
@@ -167,15 +172,27 @@ app.post('/api/analyze', rateLimiter, async (req, res) => {
       parsed.issueNumber
     );
 
-    // Optional Graphify context check (placeholder returns null)
-    const graphifyContext = await getCodebaseContext(parsed.owner, parsed.repo);
-    const graphifyUsed = graphifyContext !== null;
+    // Build a bounded local graph from the retrieved snapshot first. An
+    // optional native Graphify response may enrich it, but never bypasses
+    // server-side evidence validation.
+    const localGraphContext = getLocalCodebaseContext(githubContext);
+    const nativeGraphContext = await getCodebaseContext(parsed.owner, parsed.repo);
+    const candidateGraphContext = nativeGraphContext?.graph
+      ? nativeGraphContext
+      : localGraphContext;
+    const validatedGraph = validateGraph(candidateGraphContext.graph, githubContext);
+    const graphifyStatus = nativeGraphContext?.graph
+      ? 'native' as const
+      : validatedGraph.status === 'unavailable'
+      ? 'unavailable' as const
+      : 'local_fallback' as const;
+    const graphifyUsed = graphifyStatus === 'native';
 
     // Step 3: Construct prompt with defensive security directives & developer passport
-    const prompt = buildContributionPrompt(githubContext, passport);
+    const prompt = buildContributionPrompt(githubContext, passport, validatedGraph);
 
     // Step 4: Invoke configured Gemma model with SDK and schema validation
-    const { guide: rawGuide, modelId } = await generateContributionGuide(prompt);
+    const { guide: rawGuide, modelId, provider, fallbackUsed } = await generateContributionGuide(prompt);
 
     // Step 5: Validate model guide against real source registry and file tree
     const { guide: validatedGuide, meta } = validateGuide(
@@ -183,7 +200,11 @@ app.post('/api/analyze', rateLimiter, async (req, res) => {
       githubContext,
       modelId,
       graphifyUsed,
-      passport
+      passport,
+      validatedGraph,
+      graphifyStatus,
+      provider,
+      fallbackUsed
     );
 
     // Return complete, verified analysis result

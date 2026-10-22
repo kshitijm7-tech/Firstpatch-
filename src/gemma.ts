@@ -30,113 +30,92 @@ function cleanJsonOutput(raw: string): string {
  */
 export async function generateContributionGuide(
   prompt: string
-): Promise<{ guide: RawModelGuide; modelId: string }> {
+): Promise<{ guide: RawModelGuide; modelId: string; provider: 'google' | 'ollama'; fallbackUsed: boolean }> {
+  const failures: Error[] = [];
+  try {
+    const modelId = requireGemmaConfig();
+    const guide = await invokeGoogle(prompt, modelId);
+    return { guide, modelId, provider: 'google', fallbackUsed: false };
+  } catch (err) {
+    failures.push(err instanceof Error ? err : new Error(String(err)));
+  }
+
+  if (process.env.OLLAMA_ENABLED === 'true') {
+    const candidates = [
+      ['OLLAMA_PHI_MODEL', process.env.OLLAMA_PHI_MODEL?.trim()],
+      ['OLLAMA_LLAMA_MODEL', process.env.OLLAMA_LLAMA_MODEL?.trim()],
+    ] as const;
+    for (const [envName, modelId] of candidates) {
+      if (!modelId) {
+        failures.push(new ModelConfigError(`${envName} is not configured for Ollama fallback.`));
+        continue;
+      }
+      try {
+        const guide = await invokeOllama(prompt, modelId);
+        return { guide, modelId, provider: 'ollama', fallbackUsed: true };
+      } catch (err) {
+        failures.push(err instanceof Error ? err : new Error(String(err)));
+      }
+    }
+  }
+
+  const last = failures[failures.length - 1];
+  if (last instanceof ModelConfigError) throw last;
+  throw new ModelUnavailableError('Gemma 4 was unavailable and configured Ollama fallbacks could not produce a valid guide.');
+}
+
+function requireGemmaConfig(): string {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) {
-    throw new ModelConfigError(
-      'Server configuration missing: GEMINI_API_KEY is not configured in environment or Secrets.'
-    );
-  }
-
+  if (!apiKey) throw new ModelConfigError('Server configuration missing: GEMINI_API_KEY is not configured in environment or Secrets.');
   const modelId = process.env.GEMMA_MODEL?.trim();
-  if (!modelId) {
-    throw new ModelConfigError(
-      'Server configuration missing: GEMMA_MODEL is not configured. Please set GEMMA_MODEL in your environment variables or Secrets panel.'
-    );
-  }
-
+  if (!modelId) throw new ModelConfigError('Server configuration missing: GEMMA_MODEL is not configured.');
   if (!/^(?:(?:models\/)?|google\/)gemma[-:]4(?:[-:].*)?$/i.test(modelId)) {
     throw new ModelConfigError('Server configuration must use an accessible Gemma 4 model in GEMMA_MODEL.');
   }
+  return modelId;
+}
 
-  const ai = new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
-
-  let rawOutputText = '';
-
+async function invokeGoogle(prompt: string, modelId: string): Promise<RawModelGuide> {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY!.trim(), httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } });
   try {
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        temperature: 0.2,
-      },
-    });
-
-    rawOutputText = response.text || '';
+    const response = await ai.models.generateContent({ model: modelId, contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.2 } });
+    const first = attemptParseAndValidate(response.text || '');
+    if (first.success) return first.data;
+    const retry = await ai.models.generateContent({ model: modelId, contents: `${prompt}\n\nReturn valid JSON only. Previous validation error: ${first.error}`, config: { responseMimeType: 'application/json', temperature: 0.1 } });
+    const second = attemptParseAndValidate(retry.text || '');
+    if (second.success) return second.data;
+    throw new ModelOutputValidationError(`Model output failed schema validation after corrective retry. Reason: ${second.error}`);
   } catch (err: unknown) {
-    const errMsg = (err as Error)?.message || '';
-    if (errMsg.includes('404') || errMsg.includes('not found')) {
-      throw new ModelConfigError(
-        `The configured model "${modelId}" was not found or is not accessible with the current API credentials.`
-      );
-    }
-    if (errMsg.includes('503') || errMsg.includes('UNAVAILABLE') || errMsg.includes('high demand')) {
-      throw new ModelUnavailableError(
-        'The AI model service is currently experiencing temporary high demand. Please try again in 10-20 seconds.'
-      );
-    }
-    if (errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('ResourceExhausted')) {
-      throw new ModelUnavailableError(
-        'AI model quota exceeded or rate limit reached. Please check your AI Studio quota or try again in a few minutes.'
-      );
-    }
-    throw new ModelUnavailableError(
-      'The AI model service encountered a temporary error while processing the request. Please try again.'
-    );
-  }
-
-  if (!rawOutputText) {
-    throw new ModelOutputValidationError('The model returned an empty response.');
-  }
-
-  // Attempt 1: Parse and validate
-  const firstParseResult = attemptParseAndValidate(rawOutputText);
-  if (firstParseResult.success) {
-    return { guide: firstParseResult.data, modelId };
-  }
-
-  // Single corrective retry if initial response failed schema validation
-  const retryPrompt = `${prompt}
-
-[SYSTEM NOTICE - PREVIOUS ATTEMPT FAILED VALIDATION]:
-Your previous JSON output did not pass validation:
-Errors: ${firstParseResult.error}
-
-Please regenerate the full JSON response adhering strictly to the JSON schema. Return only valid JSON.`;
-
-  try {
-    const retryResponse = await ai.models.generateContent({
-      model: modelId,
-      contents: retryPrompt,
-      config: {
-        responseMimeType: 'application/json',
-        temperature: 0.1,
-      },
-    });
-
-    const retryText = retryResponse.text || '';
-    const retryParseResult = attemptParseAndValidate(retryText);
-
-    if (retryParseResult.success) {
-      return { guide: retryParseResult.data, modelId };
-    }
-
-    throw new ModelOutputValidationError(
-      `Model output failed schema validation after corrective retry. Reason: ${retryParseResult.error}`
-    );
-  } catch (err) {
     if (err instanceof ModelOutputValidationError) throw err;
-    throw new ModelUnavailableError(
-      'Model service error during corrective validation retry.'
-    );
+    const message = String((err as Error)?.message || '');
+    if (message.includes('404') || /not found|not accessible/i.test(message)) throw new ModelConfigError(`The configured model "${modelId}" was not found or is not accessible with the current API credentials.`);
+    if (message.includes('429') || /quota|ResourceExhausted/i.test(message)) throw new ModelUnavailableError('AI model quota exceeded or rate limit reached.');
+    throw new ModelUnavailableError('The AI model service encountered a temporary error while processing the request.');
+  }
+}
+
+async function invokeOllama(prompt: string, modelId: string): Promise<RawModelGuide> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 120000);
+  try {
+    const baseUrl = (process.env.OLLAMA_BASE_URL?.trim() || 'http://localhost:11434').replace(/\/$/, '');
+    const request = async (content: string) => fetch(`${baseUrl}/api/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: modelId, stream: false, format: 'json', options: { temperature: 0.1, num_ctx: 16384 }, messages: [{ role: 'user', content }] }), signal: controller.signal });
+    const response = await request(prompt);
+    if (!response.ok) throw new ModelUnavailableError(`Ollama model "${modelId}" is unavailable.`);
+    const data = await response.json() as { message?: { content?: string } };
+    const parsed = attemptParseAndValidate(data.message?.content || '');
+    if (parsed.success) return parsed.data;
+    const retry = await request(`${prompt}\n\nReturn only JSON matching the requested schema. Validation error: ${parsed.error}`);
+    if (!retry.ok) throw new ModelUnavailableError(`Ollama model "${modelId}" is unavailable.`);
+    const retryData = await retry.json() as { message?: { content?: string } };
+    const retryParsed = attemptParseAndValidate(retryData.message?.content || '');
+    if (!retryParsed.success) throw new ModelOutputValidationError(`Ollama output failed schema validation after retry: ${retryParsed.error}`);
+    return retryParsed.data;
+  } catch (err) {
+    if (err instanceof ModelOutputValidationError || err instanceof ModelUnavailableError) throw err;
+    throw new ModelUnavailableError(`Ollama model "${modelId}" could not be reached.`);
+  } finally {
+    clearTimeout(timer);
   }
 }
 

@@ -50,6 +50,7 @@ export const EvidenceDrawer: React.FC<EvidenceDrawerProps> = ({
   const [copied, setCopied] = useState(false);
 
   const handleCopyExcerpt = (text: string) => {
+    if (!navigator.clipboard) return;
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -57,17 +58,18 @@ export const EvidenceDrawer: React.FC<EvidenceDrawerProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-900 rounded-xl border border-slate-800 shadow-xl overflow-hidden">
+    <section className="flex h-full min-h-[420px] flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-900 shadow-xl" aria-labelledby="evidence-drawer-title">
       {/* Drawer Header */}
       <div className="p-4 bg-slate-950/80 border-b border-slate-800 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Eye className="w-4 h-4 text-indigo-400" />
-          <h3 className="text-sm font-bold text-white tracking-tight">
+          <h3 id="evidence-drawer-title" className="text-sm font-bold text-white tracking-tight">
             Evidence Drawer & Investigation Plan
           </h3>
         </div>
         {(selectedFile || selectedEdge || selectedNode) && (
           <button
+            type="button"
             onClick={onClearSelection}
             className="text-[11px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800 transition-colors"
           >
@@ -77,6 +79,14 @@ export const EvidenceDrawer: React.FC<EvidenceDrawerProps> = ({
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        {!selectedFile && !selectedEdge && !selectedNode && (
+          <div className="rounded-xl border border-dashed border-slate-700 bg-slate-950/50 p-5 text-center">
+            <Eye className="mx-auto mb-2 h-6 w-6 text-slate-600" aria-hidden="true" />
+            <h4 className="text-sm font-semibold text-slate-200">Select a graph item to inspect evidence</h4>
+            <p className="mt-1 text-xs leading-relaxed text-slate-500">Verified excerpts, source links, and hypothesis context will appear here.</p>
+          </div>
+        )}
+
         {/* ACTIVE EVIDENCE INSPECTION CARD */}
         {selectedFile && (
           <div className="p-4 rounded-xl bg-slate-950/60 border border-indigo-500/30 space-y-3">
@@ -143,6 +153,7 @@ export const EvidenceDrawer: React.FC<EvidenceDrawerProps> = ({
                     Source Excerpt:
                   </span>
                   <button
+                    type="button"
                     onClick={() => handleCopyExcerpt(selectedFile.supporting_excerpt)}
                     className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1"
                   >
@@ -184,6 +195,13 @@ export const EvidenceDrawer: React.FC<EvidenceDrawerProps> = ({
               {selectedEdge.why}
             </p>
 
+            {selectedEdge.source_excerpt && (
+              <div className="space-y-1.5 border-t border-slate-800/80 pt-2">
+                <span className="text-[11px] font-mono uppercase text-slate-400">Relationship evidence excerpt</span>
+                <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg border border-slate-800 bg-slate-900 p-3 text-[11px] leading-relaxed text-emerald-300">{selectedEdge.source_excerpt}</pre>
+              </div>
+            )}
+
             <div className="text-[11px] font-mono text-slate-400 flex items-center gap-2">
               <span>{selectedEdge.from}</span>
               <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
@@ -208,7 +226,10 @@ export const EvidenceDrawer: React.FC<EvidenceDrawerProps> = ({
         {selectedNode && !selectedFile && !selectedEdge && (
           <div className="p-4 rounded-xl bg-slate-950/60 border border-indigo-500/30 space-y-2">
             <span className="text-xs font-bold text-white font-mono">
-              Node: {selectedNode.label} ({selectedNode.type})
+               Node: {selectedNode.label} ({selectedNode.type})
+            </span>
+            <span className={`w-fit rounded border px-2 py-0.5 text-[10px] font-bold uppercase ${selectedNode.status === 'exists' ? 'border-emerald-800/60 bg-emerald-950 text-emerald-300' : selectedNode.status ? 'border-amber-800/60 bg-amber-950 text-amber-300' : 'border-slate-700 bg-slate-900 text-slate-400'}`}>
+              {selectedNode.status ? selectedNode.status : 'unverified node'}
             </span>
             {selectedNode.subtext && (
               <p className="text-xs text-slate-300">
@@ -310,6 +331,6 @@ export const EvidenceDrawer: React.FC<EvidenceDrawerProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </section>
   );
 };

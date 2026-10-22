@@ -12,6 +12,7 @@ import {
   validateGuide,
   normalizeText,
   findLineNumbers,
+  validateGraph,
 } from '../src/validate.js';
 import { buildContributionPrompt } from '../src/prompt.js';
 import {
@@ -24,6 +25,7 @@ import {
 import type { GitHubContext } from '../src/github.js';
 import type { RawModelGuide } from '../src/schema.js';
 import { selectCandidateFiles } from '../src/github.js';
+import { buildLocalGraph, getLocalCodebaseContext } from '../src/graphify.js';
 
 let passed = 0;
 let failed = 0;
@@ -878,6 +880,63 @@ test('validateGuide synthesizes personalized intelligence when passport is provi
   assert(guide.personalized_intelligence.skills_you_have.includes('JavaScript') || guide.personalized_intelligence.skills_you_have.includes('React'));
   assert(guide.personalized_intelligence.skill_gap_pathway.length > 0, 'Pathway steps should be generated');
   assert(guide.personalized_intelligence.estimated_time_hours.length > 0, 'Estimated hours must be present');
+});
+
+// 8. Deterministic Graphify fallback fixtures
+console.log('\nGroup 8: Local Graphify Fallback');
+
+test('builds bounded evidence-backed graph from retrieved source registry', () => {
+  const graphContext: GitHubContext = {
+    issue: {
+      owner: 'acme', repo: 'demo', number: 7, title: 'Fix parser', body: 'Please inspect `src/parser.ts` and its tests.',
+      author: 'dev', state: 'open', created_at: '2026-01-01T00:00:00Z', html_url: 'https://github.com/acme/demo/issues/7', labels: [],
+    },
+    repository: { owner: 'acme', repo: 'demo', description: null, primary_language: 'TypeScript', default_branch: 'main', license: 'MIT', topics: [], html_url: 'https://github.com/acme/demo' },
+    comments: [], tree: { paths: ['src/parser.ts', 'src/token.ts', 'tests/parser.test.ts'], isComplete: true, totalEntries: 3 },
+    sources: [
+      { id: 'src_issue_desc', type: 'issue_body', label: 'Issue #7', url: 'https://github.com/acme/demo/issues/7', content: 'Please inspect `src/parser.ts` and its tests.', length: 44, truncated: false },
+      { id: 'src_file_src_parser_ts', type: 'source_file', label: 'src/parser.ts', url: 'https://github.com/acme/demo/blob/main/src/parser.ts', content: "import { tokenize } from './token';\nexport function parse(input: string) { return tokenize(input); }", length: 96, truncated: false },
+      { id: 'src_file_src_token_ts', type: 'source_file', label: 'src/token.ts', url: 'https://github.com/acme/demo/blob/main/src/token.ts', content: 'export function tokenize(input: string) { return input.split(/\\s+/); }', length: 72, truncated: false },
+      { id: 'src_file_tests_parser_test_ts', type: 'source_file', label: 'tests/parser.test.ts', url: 'https://github.com/acme/demo/blob/main/tests/parser.test.ts', content: "import { parse } from '../src/parser';\ndescribe('parser', () => { it('parses', () => parse('ok')); });", length: 99, truncated: false },
+    ],
+    truncationFlags: { issue_body: false, comments: false, readme: false, contributing: false, candidate_files: false }, warnings: [],
+  };
+  const first = buildLocalGraph(graphContext);
+  const second = buildLocalGraph(graphContext);
+  assert.deepStrictEqual(first, second, 'fallback graph must be deterministic');
+  assert.strictEqual(first.status, 'available');
+  assert(first.nodes.some((node) => node.type === 'issue'));
+  assert(first.nodes.some((node) => node.type === 'symbol' && node.label === 'parse'));
+  assert(first.edges.some((edge) => edge.type === 'imports' && edge.from === 'file:src/parser.ts' && edge.to === 'file:src/token.ts'));
+  assert(first.edges.some((edge) => edge.type === 'mentions' && edge.to === 'file:src/parser.ts'));
+  assert(first.edges.some((edge) => edge.type === 'tests' && edge.to === 'file:src/parser.ts'));
+  assert(first.edges.every((edge) => edge.evidence.length > 0));
+  assert(first.nodes.length <= 120 && first.edges.length <= 240);
+  assert.strictEqual(getLocalCodebaseContext(graphContext).isAvailable, true);
+});
+
+test('server validates graph evidence before exposing relationships to the guide', () => {
+  const graphContext: GitHubContext = {
+    issue: { owner: 'acme', repo: 'demo', number: 7, title: 'Fix parser', body: 'Inspect `src/parser.ts`.', author: 'dev', state: 'open', created_at: '2026-01-01T00:00:00Z', html_url: 'https://github.com/acme/demo/issues/7', labels: [] },
+    repository: { owner: 'acme', repo: 'demo', description: null, primary_language: 'TypeScript', default_branch: 'main', license: 'MIT', topics: [], html_url: 'https://github.com/acme/demo' },
+    comments: [],
+    tree: { paths: ['src/parser.ts', 'src/token.ts'], isComplete: true, totalEntries: 2 },
+    sources: [
+      { id: 'src_issue_desc', type: 'issue_body', label: 'Issue #7', url: 'https://github.com/acme/demo/issues/7', content: 'Inspect `src/parser.ts`.', length: 24, truncated: false },
+      { id: 'parser', type: 'source_file', label: 'src/parser.ts', url: 'https://github.com/acme/demo/blob/main/src/parser.ts', content: "import { tokenize } from './token';\nexport function parse() { return tokenize(); }", length: 80, truncated: false },
+      { id: 'token', type: 'source_file', label: 'src/token.ts', url: 'https://github.com/acme/demo/blob/main/src/token.ts', content: 'export function tokenize() { return []; }', length: 40, truncated: false },
+    ],
+    truncationFlags: { issue_body: false, comments: false, readme: false, contributing: false, candidate_files: false }, warnings: [],
+  };
+  const validated = validateGraph(buildLocalGraph(graphContext), graphContext);
+  assert(validated.nodes.some((node) => node.type === 'symbol' && node.label === 'parse'));
+  assert(validated.edges.some((edge) => edge.type === 'imports_or_calls' && edge.status === 'verified'));
+  assert(validated.edges.every((edge) => edge.status === 'verified' || edge.status === 'unsupported'));
+});
+
+test('marks fallback unavailable when no source text was retrieved', () => {
+  const context = { issue: { owner: 'a', repo: 'b', number: 1, title: 'x', body: '', author: 'x', state: 'open' as const, created_at: '', html_url: 'https://github.com/a/b/issues/1', labels: [] }, repository: { owner: 'a', repo: 'b', description: null, primary_language: null, default_branch: 'main', license: null, topics: [], html_url: 'https://github.com/a/b' }, comments: [], tree: { paths: [], isComplete: false, totalEntries: 0 }, sources: [], truncationFlags: { issue_body: false, comments: false, readme: false, contributing: false, candidate_files: false }, warnings: [] } satisfies GitHubContext;
+  assert.strictEqual(buildLocalGraph(context).status, 'unavailable');
 });
 
 console.log(`\n=== Test Results: ${passed} passed, ${failed} failed ===\n`);

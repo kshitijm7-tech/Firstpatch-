@@ -6,6 +6,8 @@
 import type { GitHubContext } from './github.js';
 import type {
   AnalysisMeta,
+  BoundedGraph,
+  GraphNode,
   FileExistenceStatus,
   GroundingStatus,
   RawModelGuide,
@@ -20,6 +22,13 @@ import type {
   ValidatedTest,
   DeveloperPassport,
 } from './schema.js';
+
+export interface ValidatedGraph {
+  nodes: ValidatedRelationshipNode[];
+  edges: ValidatedRelationshipEdge[];
+  status: 'available' | 'partial' | 'unavailable';
+  warnings: string[];
+}
 
 /**
  * Normalizes text for lenient yet robust excerpt containment matching:
@@ -147,6 +156,111 @@ export function sanitizeFilePath(rawPath: string): {
 }
 
 /**
+ * Validates a deterministic or external graph against the retrieved source
+ * registry. Graph providers never get to assert that their own output is
+ * verified; the server derives status from real source excerpts and paths.
+ */
+export function validateGraph(
+  graph: BoundedGraph | undefined,
+  context: GitHubContext
+): ValidatedGraph {
+  if (!graph) {
+    return { nodes: [], edges: [], status: 'unavailable', warnings: ['No graph analysis was available.'] };
+  }
+
+  const sourceMap = new Map(context.sources.map((source) => [source.id, source]));
+  const treeSet = new Set(context.tree.paths.map((path) => path.toLowerCase()));
+  const branch = context.repository.default_branch || 'main';
+  const nodeMap = new Map<string, ValidatedRelationshipNode>();
+  const warnings = [...(graph.warnings || [])];
+
+  const normalizeNodeId = (node: GraphNode): string => {
+    if (node.type === 'issue') return 'issue';
+    if (node.type === 'repository') return 'repository';
+    return node.id;
+  };
+
+  for (const node of graph.nodes.slice(0, 120)) {
+    if (!node || typeof node.id !== 'string' || !node.id.trim()) continue;
+    const normalizedId = normalizeNodeId(node);
+    let path = node.path;
+    let status: FileExistenceStatus | undefined;
+    let url: string | null | undefined;
+
+    if (node.type === 'file' || node.type === 'test') {
+      const safePath = path ? sanitizeFilePath(path) : { normalizedPath: '', isValid: false };
+      if (!safePath.isValid) continue;
+      path = safePath.normalizedPath;
+      const lowerPath = path.toLowerCase();
+      status = treeSet.has(lowerPath)
+        ? 'exists'
+        : context.tree.isComplete
+        ? 'not_found_in_complete_tree'
+        : 'not_checked';
+      url = status === 'exists'
+        ? `https://github.com/${context.repository.owner}/${context.repository.repo}/blob/${branch}/${path}`
+        : null;
+    }
+
+    nodeMap.set(node.id, {
+      id: normalizedId,
+      label: node.label.slice(0, 200),
+      type: node.type,
+      subtext: path && path !== node.label ? path : undefined,
+      status,
+      url,
+    });
+  }
+
+  const edges: ValidatedRelationshipEdge[] = [];
+  for (const edge of graph.edges.slice(0, 240)) {
+    const fromNode = nodeMap.get(edge.from);
+    const toNode = nodeMap.get(edge.to);
+    if (!fromNode || !toNode || fromNode.id === toNode.id) continue;
+
+    const edgeType: ValidatedRelationshipEdge['type'] =
+      edge.type === 'mentions'
+        ? 'mentioned_in_issue'
+        : edge.type === 'contains' && toNode.type === 'symbol'
+        ? 'contains_matching_symbol'
+        : edge.type === 'imports' || edge.type === 'requires'
+        ? 'imports_or_calls'
+        : 'potentially_related';
+
+    const verifiedEvidence = edge.evidence.find((item) => {
+      const source = sourceMap.get(item.sourceId);
+      return Boolean(source && item.excerpt && verifyExcerptInSource(item.excerpt, source.content));
+    });
+    const source = verifiedEvidence ? sourceMap.get(verifiedEvidence.sourceId) : undefined;
+    const status = verifiedEvidence ? 'verified' : 'unsupported';
+
+    edges.push({
+      id: `graph:${edge.id}`,
+      from: fromNode.id,
+      to: toNode.id,
+      type: edgeType,
+      label: edge.type === 'tests' ? 'Test covers file' : edge.type,
+      why: `Derived from ${edge.type} relationship in retrieved repository data.`,
+      is_hypothesis: !verifiedEvidence,
+      status,
+      source_excerpt: verifiedEvidence?.excerpt,
+      source_url: source?.url || null,
+    });
+  }
+
+  if (edges.length === 0 && graph.edges.length > 0) {
+    warnings.push('Graph relationships were returned but none could be verified against retrieved source evidence.');
+  }
+
+  return {
+    nodes: Array.from(new Map(Array.from(nodeMap.values()).map((node) => [node.id, node])).values()),
+    edges,
+    status: graph.status,
+    warnings: Array.from(new Set(warnings)),
+  };
+}
+
+/**
  * Validates the raw model guide against real GitHub context and source registry,
  * synthesizing the validated Impact Trail.
  */
@@ -155,9 +269,14 @@ export function validateGuide(
   context: GitHubContext,
   modelId: string,
   graphifyUsed = false,
-  passport?: DeveloperPassport
+  passport?: DeveloperPassport,
+  validatedGraph?: ValidatedGraph,
+  graphifyStatus: AnalysisMeta['graphify_status'] = 'unavailable',
+  modelProvider: AnalysisMeta['model_provider'] = 'google',
+  fallbackUsed = false
 ): { guide: ValidatedGuide; meta: AnalysisMeta } {
   const warnings = [...context.warnings];
+  if (validatedGraph?.warnings?.length) warnings.push(...validatedGraph.warnings);
   const sourceMap = new Map<string, SourceRegistryItem>();
   for (const s of context.sources) {
     sourceMap.set(s.id, s);
@@ -377,8 +496,19 @@ export function validateGuide(
     });
   }
 
+  // Add only server-validated graph nodes and edges. Model-generated edges are
+  // handled below and remain hypotheses unless independently grounded.
+  for (const node of validatedGraph?.nodes || []) {
+    if (!nodesMap.has(node.id)) {
+      nodesMap.set(node.id, node);
+    }
+  }
+
   // Edges
   const edges: ValidatedRelationshipEdge[] = [];
+  for (const edge of validatedGraph?.edges || []) {
+    edges.push(edge);
+  }
   const rawEdges = rawImpact?.relationships || [];
 
   if (rawEdges.length > 0) {
@@ -548,6 +678,8 @@ export function validateGuide(
   // Construct meta object
   const meta: AnalysisMeta = {
     configured_model: modelId,
+    model_provider: modelProvider,
+    fallback_used: fallbackUsed,
     timestamp: new Date().toISOString(),
     sources_fetched: context.sources.map((s) => ({
       id: s.id,
@@ -561,6 +693,7 @@ export function validateGuide(
     tree_entries_count: context.tree.totalEntries,
     truncation_flags: context.truncationFlags,
     graphify_used: graphifyUsed,
+    graphify_status: graphifyStatus,
     warnings,
   };
 

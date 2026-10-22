@@ -30,12 +30,15 @@ interface ImpactTrailViewProps {
   trail: ValidatedImpactTrail;
   issueTitle: string;
   issueNumber: number;
+  /** Optional provenance supplied by a caller that has Graphify metadata. */
+  graphifyAvailable?: boolean;
 }
 
 export const ImpactTrailView: React.FC<ImpactTrailViewProps> = ({
   trail,
   issueTitle,
   issueNumber,
+  graphifyAvailable = false,
 }) => {
   const [selectedFile, setSelectedFile] = useState<ValidatedCandidateFile | null>(
     trail.candidate_files[0] || null
@@ -89,8 +92,12 @@ export const ImpactTrailView: React.FC<ImpactTrailViewProps> = ({
               <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
               <span>Evidence-First Architecture</span>
             </div>
-            <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-2.5">
+            <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight flex flex-wrap items-center gap-2.5">
               <span>Impact Trail</span>
+              <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-wide align-middle ${graphifyAvailable ? 'border-cyan-800 bg-cyan-950/60 text-cyan-300' : 'border-amber-800 bg-amber-950/50 text-amber-300'}`}>
+                <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
+                {graphifyAvailable ? 'Graphify native' : 'Local fallback'}
+              </span>
             </h2>
             <p className="text-xs sm:text-sm text-slate-300 max-w-3xl leading-relaxed">
               Traceable issue-to-code investigation:
@@ -118,9 +125,19 @@ export const ImpactTrailView: React.FC<ImpactTrailViewProps> = ({
           </div>
         </div>
 
+        {!graphifyAvailable && (
+          <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-900/60 bg-amber-950/25 px-3 py-2 text-[11px] leading-relaxed text-amber-200/90" role="status">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" aria-hidden="true" />
+            <span><strong className="font-semibold text-amber-300">Graphify context unavailable.</strong> Showing validated local relationships and clearly marked hypotheses; use the evidence drawer to verify each lead.</span>
+          </div>
+        )}
+
         {/* Mobile Tab Switcher */}
-        <div className="flex md:hidden items-center gap-1 p-1 mt-5 bg-slate-950 rounded-lg border border-slate-800">
+        <div className="flex md:hidden items-center gap-1 p-1 mt-5 bg-slate-950 rounded-lg border border-slate-800" role="tablist" aria-label="Impact Trail panels">
           <button
+            type="button"
+            role="tab"
+            aria-selected={mobileTab === 'left'}
             onClick={() => setMobileTab('left')}
             className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-colors ${
               mobileTab === 'left' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
@@ -129,6 +146,9 @@ export const ImpactTrailView: React.FC<ImpactTrailViewProps> = ({
             Requirements & Files
           </button>
           <button
+            type="button"
+            role="tab"
+            aria-selected={mobileTab === 'center'}
             onClick={() => setMobileTab('center')}
             className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-colors ${
               mobileTab === 'center' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
@@ -137,6 +157,9 @@ export const ImpactTrailView: React.FC<ImpactTrailViewProps> = ({
             Relationship Map
           </button>
           <button
+            type="button"
+            role="tab"
+            aria-selected={mobileTab === 'right'}
             onClick={() => setMobileTab('right')}
             className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-colors ${
               mobileTab === 'right' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
@@ -226,7 +249,11 @@ export const ImpactTrailView: React.FC<ImpactTrailViewProps> = ({
             </div>
 
             <div className="space-y-2.5">
-              {trail.candidate_files.map((file, idx) => {
+              {trail.candidate_files.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-700 bg-slate-950/60 p-4 text-center text-xs leading-relaxed text-slate-500">
+                  No candidate files were verified in the repository snapshot. Requirements and investigation guidance are still available.
+                </div>
+              ) : trail.candidate_files.map((file, idx) => {
                 const isSelected = selectedFile?.path === file.path;
                 const isExists = file.status === 'exists';
 
@@ -281,6 +308,7 @@ export const ImpactTrailView: React.FC<ImpactTrailViewProps> = ({
           <RelationshipGraph
             nodes={trail.relationship_graph.nodes}
             edges={trail.relationship_graph.edges}
+            graphifyAvailable={graphifyAvailable}
             selectedId={selectedFile?.path || selectedEdge?.id || selectedNode?.id || null}
             onSelectNode={handleSelectNode}
             onSelectEdge={handleSelectEdge}

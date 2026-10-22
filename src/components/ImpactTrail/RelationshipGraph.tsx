@@ -5,7 +5,7 @@
 
 import React from 'react';
 import type { ValidatedRelationshipEdge, ValidatedRelationshipNode } from '../../schema.js';
-import { GitPullRequest, FileCode, Code2, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react';
+import { ArrowRight, Code2, FileCode, GitPullRequest, Link2, Network, ShieldCheck } from 'lucide-react';
 
 interface RelationshipGraphProps {
   nodes: ValidatedRelationshipNode[];
@@ -13,7 +13,34 @@ interface RelationshipGraphProps {
   selectedId: string | null;
   onSelectNode: (node: ValidatedRelationshipNode) => void;
   onSelectEdge: (edge: ValidatedRelationshipEdge) => void;
+  /** True only when the optional Graphify service supplied this relationship map. */
+  graphifyAvailable?: boolean;
 }
+
+const nodeTypeLabel: Record<ValidatedRelationshipNode['type'], string> = {
+  issue: 'Issue',
+  repository: 'Repository',
+  file: 'File',
+  symbol: 'Symbol',
+  module: 'Module',
+  test: 'Test',
+};
+
+const edgeTypeLabel: Record<ValidatedRelationshipEdge['type'], string> = {
+  mentioned_in_issue: 'Mentioned in issue',
+  contains_matching_symbol: 'Contains matching symbol',
+  imports_or_calls: 'Imports or calls',
+  potentially_related: 'Potentially related',
+};
+
+const statusLabel = (status: ValidatedRelationshipEdge['status']) =>
+  status === 'verified' ? 'Verified' : status === 'ai_hypothesis' ? 'Hypothesis' : 'Unverified';
+
+const NodeIcon: React.FC<{ type: ValidatedRelationshipNode['type'] }> = ({ type }) => {
+  if (type === 'issue') return <GitPullRequest className="h-3.5 w-3.5" aria-hidden="true" />;
+  if (type === 'file') return <FileCode className="h-3.5 w-3.5" aria-hidden="true" />;
+  return <Code2 className="h-3.5 w-3.5" aria-hidden="true" />;
+};
 
 export const RelationshipGraph: React.FC<RelationshipGraphProps> = ({
   nodes,
@@ -21,186 +48,97 @@ export const RelationshipGraph: React.FC<RelationshipGraphProps> = ({
   selectedId,
   onSelectNode,
   onSelectEdge,
+  graphifyAvailable = false,
 }) => {
-  const issueNode = nodes.find((n) => n.type === 'issue') || nodes[0];
-  const fileNodes = nodes.filter((n) => n.type === 'file');
-  const symbolNodes = nodes.filter((n) => n.type === 'symbol' || n.type === 'module');
+  const issueNode = nodes.find((node) => node.type === 'issue');
+  const visibleNodes = nodes.filter((node) => node.type !== 'issue');
+  const hasGraph = Boolean(issueNode || visibleNodes.length || edges.length);
 
   return (
-    <div className="flex flex-col h-full bg-slate-950/80 rounded-xl border border-slate-800 p-4 select-none">
-      <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 mb-4">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-bold text-white uppercase tracking-wider">
-            Issue-to-Code Relationship Map
-          </span>
-          <span className="text-[10px] text-slate-500 font-mono">
-            {nodes.length} nodes · {edges.length} edges
-          </span>
+    <section className="flex min-h-[420px] flex-col rounded-xl border border-slate-800 bg-slate-950/80 p-4" aria-labelledby="relationship-map-title">
+      <div className="mb-4 flex flex-col gap-3 border-b border-slate-800/80 pb-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <Network className="h-4 w-4 text-indigo-400" aria-hidden="true" />
+            <h3 id="relationship-map-title" className="text-xs font-bold uppercase tracking-wider text-white">
+              Issue-to-code relationship map
+            </h3>
+          </div>
+          <p className="mt-1 text-[11px] text-slate-500">
+            {nodes.length} nodes · {edges.length} relationships · select a row to inspect evidence
+          </p>
         </div>
-        <div className="flex items-center gap-3 text-[11px]">
-          <span className="flex items-center gap-1.5 text-emerald-400">
-            <span className="w-2.5 h-0.5 bg-emerald-500 rounded-full" />
-            Verified Source
-          </span>
-          <span className="flex items-center gap-1.5 text-indigo-400">
-            <span className="w-2.5 h-0.5 bg-indigo-500 border-b border-dashed border-indigo-400" />
-            AI Hypothesis
-          </span>
-        </div>
+        <span className={`inline-flex w-fit items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${
+          graphifyAvailable
+            ? 'border-cyan-800/70 bg-cyan-950/50 text-cyan-300'
+            : hasGraph
+            ? 'border-amber-800/70 bg-amber-950/40 text-amber-300'
+            : 'border-slate-700 bg-slate-900 text-slate-400'
+        }`}>
+          <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
+          {graphifyAvailable ? 'Graphify native' : hasGraph ? 'Local fallback · partial' : 'No graph data'}
+        </span>
       </div>
 
-      {/* Compact Interactive Node Map */}
-      <div className="flex-1 flex flex-col md:flex-row items-center justify-between gap-6 py-4 overflow-x-auto">
-        {/* Left Column: Root Issue Node */}
-        {issueNode && (
-          <div className="w-full md:w-56 shrink-0 flex flex-col items-center">
+      <div className="mb-4 flex flex-wrap gap-2 text-[10px] text-slate-400" aria-label="Relationship map legend">
+        <span className="inline-flex items-center gap-1 rounded border border-emerald-900/70 bg-emerald-950/30 px-2 py-1 text-emerald-300"><ShieldCheck className="h-3 w-3" aria-hidden="true" /> Verified source</span>
+        <span className="inline-flex items-center gap-1 rounded border border-indigo-900/70 bg-indigo-950/30 px-2 py-1 text-indigo-300"><Link2 className="h-3 w-3" aria-hidden="true" /> Hypothesis / unverified</span>
+      </div>
+
+      {!hasGraph ? (
+        <div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-slate-700 bg-slate-900/40 p-8 text-center">
+          <Network className="mb-3 h-8 w-8 text-slate-600" aria-hidden="true" />
+          <h4 className="text-sm font-semibold text-slate-200">No relationships mapped yet</h4>
+          <p className="mt-1 max-w-xs text-xs leading-relaxed text-slate-500">The readable evidence and candidate-file list remain available alongside this empty graph.</p>
+        </div>
+      ) : (
+        <div className="flex-1 space-y-3 overflow-y-auto" role="list" aria-label="Relationship map items">
+          {issueNode && (
             <button
+              type="button"
+              role="listitem"
               onClick={() => onSelectNode(issueNode)}
-              className={`w-full text-left p-3.5 rounded-xl transition-all border ${
-                selectedId === issueNode.id
-                  ? 'bg-indigo-950/80 border-indigo-500 ring-2 ring-indigo-500/30 shadow-lg shadow-indigo-950'
-                  : 'bg-slate-900 hover:bg-slate-800/90 border-indigo-500/40 hover:border-indigo-400'
-              }`}
+              aria-pressed={selectedId === issueNode.id}
+              className={`w-full rounded-xl border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${selectedId === issueNode.id ? 'border-indigo-500 bg-indigo-950/70' : 'border-indigo-800/60 bg-slate-900 hover:border-indigo-500/70'}`}
             >
-              <div className="flex items-center justify-between gap-2 mb-1.5">
-                <span className="font-mono text-xs font-bold text-indigo-300 flex items-center gap-1.5">
-                  <GitPullRequest className="w-3.5 h-3.5 text-indigo-400" />
-                  {issueNode.label}
-                </span>
-                <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/50">
-                  ROOT
-                </span>
+              <div className="flex items-start gap-2">
+                <span className="mt-0.5 text-indigo-300"><NodeIcon type={issueNode.type} /></span>
+                <span className="min-w-0 flex-1"><span className="block truncate font-mono text-xs font-bold text-white">{issueNode.label}</span><span className="mt-1 block text-[10px] uppercase tracking-wide text-indigo-300">Issue · root</span>{issueNode.subtext && <span className="mt-1 block text-xs text-slate-400">{issueNode.subtext}</span>}</span>
+                <span className="rounded border border-indigo-800 bg-indigo-950 px-1.5 py-0.5 text-[10px] font-bold text-indigo-300">ROOT</span>
               </div>
-              <p className="text-xs text-slate-300 line-clamp-2 leading-relaxed">
-                {issueNode.subtext || 'Reported Issue Root'}
-              </p>
             </button>
-            <span className="text-[10px] text-slate-500 mt-2 font-mono">Origin Issue</span>
-          </div>
-        )}
+          )}
 
-        {/* Middle Connectors & Edges List */}
-        <div className="flex-1 flex flex-col gap-2.5 w-full min-w-[200px]">
+          {edges.length > 0 && <div className="hidden items-center gap-2 px-2 text-[10px] uppercase tracking-wider text-slate-600 sm:flex"><span className="h-px flex-1 bg-slate-800" /> relationships <span className="h-px flex-1 bg-slate-800" /></div>}
+
           {edges.map((edge) => {
-            const isSelected = selectedId === edge.id;
-            const isVerified = edge.status === 'verified';
-
+            const verified = edge.status === 'verified';
             return (
               <button
+                type="button"
+                role="listitem"
                 key={edge.id}
                 onClick={() => onSelectEdge(edge)}
-                className={`w-full text-left p-2.5 rounded-lg border transition-all text-xs flex items-center justify-between gap-3 ${
-                  isSelected
-                    ? 'bg-slate-800 border-indigo-500 shadow-md ring-1 ring-indigo-500'
-                    : isVerified
-                    ? 'bg-slate-900/90 hover:bg-slate-800/80 border-emerald-900/60'
-                    : 'bg-slate-900/50 hover:bg-slate-800/60 border-slate-800 border-dashed'
-                }`}
+                aria-pressed={selectedId === edge.id}
+                className={`w-full rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${selectedId === edge.id ? 'border-indigo-500 bg-slate-800' : verified ? 'border-emerald-900/70 bg-slate-900 hover:border-emerald-700' : 'border-dashed border-slate-700 bg-slate-900/60 hover:border-indigo-700'}`}
               >
-                <div className="flex items-center gap-2 min-w-0">
-                  <div
-                    className={`w-2 h-2 rounded-full shrink-0 ${
-                      isVerified ? 'bg-emerald-400' : 'bg-indigo-400'
-                    }`}
-                  />
-                  <div className="min-w-0">
-                    <span className="font-semibold text-slate-200 block truncate">
-                      {edge.label}
-                    </span>
-                    <span className="text-[11px] text-slate-400 block truncate">
-                      {edge.from === 'issue' ? 'Issue' : edge.from} → {edge.to.split('/').pop()}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="shrink-0 flex items-center gap-1.5">
-                  <span
-                    className={`text-[10px] font-mono uppercase px-1.5 py-0.5 rounded font-semibold ${
-                      isVerified
-                        ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/50'
-                        : 'bg-slate-800 text-slate-400 border border-slate-700'
-                    }`}
-                  >
-                    {isVerified ? 'VERIFIED' : 'HYPOTHESIS'}
-                  </span>
-                  <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
+                <div className="flex items-start gap-2">
+                  <ArrowRight className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${verified ? 'text-emerald-400' : 'text-indigo-400'}`} aria-hidden="true" />
+                  <span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold text-slate-200">{edge.label}</span><span className="mt-1 block truncate font-mono text-[10px] text-slate-500">{edge.from} → {edge.to}</span><span className="mt-2 inline-flex flex-wrap items-center gap-1.5"><span className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 text-[10px] uppercase text-slate-400">{edgeTypeLabel[edge.type]}</span><span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${verified ? 'bg-emerald-950 text-emerald-300' : 'bg-indigo-950 text-indigo-300'}`}>{statusLabel(edge.status)}</span></span></span>
                 </div>
               </button>
             );
           })}
+
+          {visibleNodes.map((node) => (
+            <button type="button" role="listitem" key={node.id} onClick={() => onSelectNode(node)} aria-pressed={selectedId === node.id} className={`w-full rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${selectedId === node.id ? 'border-indigo-500 bg-slate-800' : 'border-slate-800 bg-slate-900/70 hover:border-slate-600'}`}>
+              <div className="flex items-start gap-2"><span className="mt-0.5 text-amber-400"><NodeIcon type={node.type} /></span><span className="min-w-0 flex-1"><span className="block truncate font-mono text-xs font-semibold text-white">{node.label}</span><span className="mt-1 block text-[10px] uppercase tracking-wide text-slate-500">{nodeTypeLabel[node.type]}{node.status ? ` · ${node.status}` : ''}</span>{node.subtext && <span className="mt-1 block truncate text-[11px] text-slate-500">{node.subtext}</span>}</span></div>
+            </button>
+          ))}
         </div>
+      )}
 
-        {/* Right Column: Candidate File Nodes */}
-        <div className="w-full md:w-64 shrink-0 flex flex-col gap-2.5">
-          {fileNodes.map((fn) => {
-            const isSelected = selectedId === fn.id;
-            const isExists = fn.status === 'exists';
-
-            return (
-              <button
-                key={fn.id}
-                onClick={() => onSelectNode(fn)}
-                className={`w-full text-left p-3 rounded-xl border transition-all ${
-                  isSelected
-                    ? 'bg-slate-800 border-indigo-500 ring-2 ring-indigo-500/30 shadow-md'
-                    : 'bg-slate-900 hover:bg-slate-800/80 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <FileCode className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                    <span className="font-mono text-xs font-semibold text-white truncate">
-                      {fn.label}
-                    </span>
-                  </div>
-                  {isExists ? (
-                    <span className="text-[10px] font-mono text-emerald-400 font-bold">
-                      EXISTS
-                    </span>
-                  ) : (
-                    <span className="text-[10px] font-mono text-amber-400 font-bold">
-                      PARTIAL
-                    </span>
-                  )}
-                </div>
-
-                {fn.subtext && (
-                  <p className="text-[11px] font-mono text-slate-500 truncate mt-1">
-                    {fn.subtext}
-                  </p>
-                )}
-              </button>
-            );
-          })}
-
-          {/* Any Symbol nodes */}
-          {symbolNodes.map((sn) => {
-            const isSelected = selectedId === sn.id;
-            return (
-              <button
-                key={sn.id}
-                onClick={() => onSelectNode(sn)}
-                className={`w-full text-left p-2.5 rounded-lg border transition-all ${
-                  isSelected
-                    ? 'bg-slate-800 border-indigo-500'
-                    : 'bg-slate-900/60 hover:bg-slate-800/60 border-slate-800'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Code2 className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="font-mono text-xs text-amber-300 truncate">
-                    {sn.label}
-                  </span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="pt-3 border-t border-slate-800/80 text-[11px] text-slate-500 text-center">
-        Click any node or relationship link to inspect evidence, line numbers, and impact details in the Evidence Drawer.
-      </div>
-    </div>
+      <p className="mt-4 border-t border-slate-800/80 pt-3 text-center text-[11px] text-slate-500">Every hypothesis is labeled so you can distinguish an AI lead from verified repository evidence.</p>
+    </section>
   );
 };
