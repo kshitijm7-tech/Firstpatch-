@@ -45,7 +45,7 @@ export async function generateContributionGuide(
     );
   }
 
-  if (!/^(?:models\/)?gemma[-:]4(?:[-:].*)?$/i.test(modelId)) {
+  if (!/^(?:(?:models\/)?|google\/)gemma[-:]4(?:[-:].*)?$/i.test(modelId)) {
     throw new ModelConfigError('Server configuration must use an accessible Gemma 4 model in GEMMA_MODEL.');
   }
 
